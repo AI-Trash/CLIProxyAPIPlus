@@ -73,33 +73,48 @@ jobs:
       - name: Merge upstream (prefer upstream, respect .gitattributes merge=ours)
         if: steps.check.outputs.has_changes == 'true'
         id: merge
-        continue-on-error: true
         run: |
           set +e
           git merge --no-edit -X theirs upstream/main
           MERGE_EXIT=$?
-          if [ $MERGE_EXIT -ne 0 ]; then
-            echo "conflicts=true" >> $GITHUB_OUTPUT
-            echo "[!] Merge conflicts detected:"
-            git status --short | grep -E '^(UU|AA|DD|AU|UA|UD|DU)' || true
-            # Leave repo in conflicted state for PR body to capture
-          else
-            echo "conflicts=false" >> $GITHUB_OUTPUT
-            echo "[OK] Clean merge."
-          fi
           set -e
 
-      - name: Abort if conflicts
-        if: steps.check.outputs.has_changes == 'true' && steps.merge.outputs.conflicts == 'true'
-        run: |
-          # Collect conflict list for PR body
-          git diff --name-only --diff-filter=U > /tmp/conflicts.txt || true
-          git merge --abort
-          echo "CONFLICT_FILES<<EOF" >> $GITHUB_ENV
-          cat /tmp/conflicts.txt >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
-          # Redo merge with conflict markers preserved so the PR shows the state
-          git merge --no-edit -X theirs upstream/main || true
+          # Collect any remaining unmerged paths (delete-modify, binary clash, etc.)
+          UNMERGED=$(git ls-files -u | awk '{print $4}' | sort -u || true)
+
+          if [ -z "$UNMERGED" ] && [ $MERGE_EXIT -eq 0 ]; then
+            echo "conflicts=false" >> $GITHUB_OUTPUT
+            echo "[OK] Clean merge, no conflicts."
+            exit 0
+          fi
+
+          echo "conflicts=true" >> $GITHUB_OUTPUT
+          echo "[!] Conflicts detected; auto-resolving with upstream side:"
+          echo "$UNMERGED"
+
+          # Save conflict list for PR body
+          {
+            echo 'CONFLICT_FILES<<EOF'
+            echo "$UNMERGED"
+            echo 'EOF'
+          } >> $GITHUB_ENV
+
+          # Auto-resolve: prefer upstream version (covers delete-modify cases).
+          # Files with .gitattributes merge=ours were already resolved by git.
+          echo "$UNMERGED" | while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            # If file exists in upstream/main, take it; otherwise remove.
+            if git cat-file -e "upstream/main:$f" 2>/dev/null; then
+              git checkout --theirs -- "$f" 2>/dev/null || true
+            else
+              git rm -f --ignore-unmatch "$f" || true
+            fi
+            git add -- "$f" 2>/dev/null || true
+          done
+
+          # Commit the merge with resolution
+          git commit --no-edit -m "chore(upstream-sync): merge router-for-me/CLIProxyAPI (auto-resolved: $(echo "$UNMERGED" | tr '\n' ' '))"
+          echo "[OK] Conflicts auto-resolved; proceeding to build gate."
 
       - name: Set up Go
         if: steps.check.outputs.has_changes == 'true' && steps.merge.outputs.conflicts == 'false'
@@ -167,14 +182,19 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           STATUS=""
-          [ "${{ steps.merge.outputs.conflicts }}" = "true" ] && STATUS="${STATUS}- [!] Merge conflicts in: ${CONFLICT_FILES:-see diff}\n"
+          [ "${{ steps.merge.outputs.conflicts }}" = "true" ] && STATUS="${STATUS}- [!] Auto-resolved conflicts in: ${CONFLICT_FILES:-see diff}\n"
           [ "${{ steps.build.outputs.passed }}" = "false" ] && STATUS="${STATUS}- [!] \`go build\` FAILED\n"
           [ "${{ steps.test.outputs.passed }}" = "false" ] && STATUS="${STATUS}- [!] \`go test\` FAILED\n"
           [ -z "${STATUS}" ] && STATUS="- [OK] Clean merge + gates green (force_pr requested)\n"
-          BODY=$(printf "## Upstream sync: \`router-for-me/CLIProxyAPI\` → \`main\`\n\nCommits being synced: \`${{ steps.check.outputs.merge_base }}..${{ steps.check.outputs.upstream_head }}\`\n\n### Gate status\n%b\n### What to do\n1. Review the diff — especially \`cmd/server/main.go\`, \`go.mod\`, \`go.sum\`.\n2. Resolve any conflicts; plus-only provider dirs are protected by \`.gitattributes merge=ours\`.\n3. Re-run failing gates locally: \`go build ./... && go test ./...\`.\n4. Merge when green.\n" "${STATUS}")
-          gh pr create \
+          BODY=$(printf "## Upstream sync: \`router-for-me/CLIProxyAPI\` → \`main\`\n\nCommits being synced: \`${{ steps.check.outputs.merge_base }}..${{ steps.check.outputs.upstream_head }}\`\n\n### Gate status\n%b\n### What to do\n1. Review the diff — especially \`cmd/server/main.go\`, \`go.mod\`, \`go.sum\`.\n2. Plus-only provider dirs are protected by \`.gitattributes merge=ours\`.\n3. Re-run failing gates locally: \`go build ./... && go test ./...\`.\n4. Merge when green.\n" "${STATUS}")
+          PR_URL=$(gh pr create \
             --base main \
             --head "${{ steps.branch.outputs.name }}" \
             --title "chore(upstream-sync): $(date -u +%Y-%m-%d) pull from router-for-me/CLIProxyAPI" \
-            --body "${BODY}" \
-            --label "upstream-sync"
+            --body "${BODY}" 2>&1)
+          echo "$PR_URL"
+          # Add label after create; tolerate label add failures (don't fail the job)
+          PR_NUM=$(echo "$PR_URL" | grep -oE '/pull/[0-9]+' | grep -oE '[0-9]+$' || true)
+          if [ -n "$PR_NUM" ]; then
+            gh pr edit "$PR_NUM" --add-label "upstream-sync" 2>&1 || echo "[i] Label add skipped (label may not exist yet)."
+          fi
