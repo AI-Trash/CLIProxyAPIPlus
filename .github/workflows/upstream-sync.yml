@@ -43,7 +43,7 @@ jobs:
         run: git remote add upstream https://github.com/router-for-me/CLIProxyAPI.git
 
       - name: Fetch upstream
-        run: git fetch upstream main
+        run: git fetch upstream main --tags
 
       - name: Check for new upstream commits
         id: check
@@ -51,8 +51,10 @@ jobs:
           LOCAL=$(git rev-parse HEAD)
           UPSTREAM_MERGE_BASE=$(git merge-base HEAD upstream/main || echo "none")
           UPSTREAM_HEAD=$(git rev-parse upstream/main)
+          UPSTREAM_TAG=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)
           echo "local=${LOCAL}" >> $GITHUB_OUTPUT
           echo "upstream_head=${UPSTREAM_HEAD}" >> $GITHUB_OUTPUT
+          echo "upstream_tag=${UPSTREAM_TAG}" >> $GITHUB_OUTPUT
           echo "merge_base=${UPSTREAM_MERGE_BASE}" >> $GITHUB_OUTPUT
           if [ "${UPSTREAM_HEAD}" = "${UPSTREAM_MERGE_BASE}" ]; then
             echo "has_changes=false" >> $GITHUB_OUTPUT
@@ -133,6 +135,16 @@ jobs:
             git add internal/registry/models/models.json
             git commit -m "chore(upstream-sync): refresh models catalog"
           fi
+
+      - name: Record synced upstream version
+        if: steps.check.outputs.has_changes == 'true'
+        run: |
+          {
+            echo "UPSTREAM_TAG=${{ steps.check.outputs.upstream_tag }}"
+            echo "UPSTREAM_COMMIT=${{ steps.check.outputs.upstream_head }}"
+          } > .ccs-fork-upstream.env
+          git add .ccs-fork-upstream.env
+          git diff --cached --quiet || git commit -m "chore(upstream-sync): record upstream version"
 
       - name: Build gate
         if: steps.check.outputs.has_changes == 'true'
