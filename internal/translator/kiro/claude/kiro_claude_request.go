@@ -146,6 +146,8 @@ func ConvertClaudeRequestToKiro(modelName string, inputRawJSON []byte, stream bo
 // Supports thinking mode - when enabled, injects thinking tags into system prompt.
 // Returns the payload and a boolean indicating whether thinking mode was injected.
 func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, isAgentic, isChatOnly bool, headers http.Header, metadata map[string]any) ([]byte, bool) {
+	log.Debugf("kiro: BuildKiroPayload called, modelID=%s, origin=%s, isAgentic=%v, isChatOnly=%v", modelID, origin, isAgentic, isChatOnly)
+
 	// Extract max_tokens for potential use in inferenceConfig
 	// Handle -1 as "use maximum" (Kiro max output is ~32000 tokens)
 	const kiroMaxOutputTokens = 32000
@@ -190,6 +192,15 @@ func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, isA
 	// Extract system prompt
 	systemPrompt := extractSystemPrompt(claudeBody)
 
+	// Early exit: if system prompt injection is disabled, drop the client system prompt
+	// immediately to avoid unnecessary string building (timestamp, agentic, thinking tags, etc.)
+	if !kirocommon.IsSystemPromptInjectEnabled() {
+		if systemPrompt != "" {
+			log.Debugf("kiro: system prompt injection disabled, dropping system prompt (len=%d)", len(systemPrompt))
+		}
+		systemPrompt = ""
+	}
+
 	// Check for thinking mode using the comprehensive IsThinkingEnabledWithHeaders function
 	// This supports Claude API format, OpenAI reasoning_effort, AMP/Cursor format, and Anthropic-Beta header
 	thinkingEnabled := IsThinkingEnabledWithHeaders(claudeBody, headers)
@@ -225,6 +236,10 @@ func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, isA
 
 	// Convert Claude tools to Kiro format
 	kiroTools := convertClaudeToolsToKiro(tools)
+	log.Infof("kiro: tools conversion: input_exist=%v, output_count=%d", tools.IsArray(), len(kiroTools))
+	for i, t := range kiroTools {
+		log.Debugf("kiro: tool[%d]: name=%s", i, t.ToolSpecification.Name)
+	}
 
 	// Thinking mode implementation:
 	// Kiro API supports official thinking/reasoning mode via <thinking_mode> tag.
@@ -269,8 +284,13 @@ func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, isA
 		currentMessage = KiroCurrentMessage{UserInputMessage: *currentUserMsg}
 	} else {
 		fallbackContent := ""
-		if systemPrompt != "" {
+		if systemPrompt != "" && kirocommon.IsSystemPromptInjectEnabled() {
 			fallbackContent = "--- SYSTEM PROMPT ---\n" + systemPrompt + "\n--- END SYSTEM PROMPT ---\n"
+			log.Debugf("kiro: system prompt injected into fallback user message (len=%d)", len(systemPrompt))
+		} else if systemPrompt != "" {
+			log.Debugf("kiro: system prompt dropped (inject disabled, len=%d)", len(systemPrompt))
+		} else {
+			log.Debugf("kiro: no system prompt present in fallback user message")
 		}
 		currentMessage = KiroCurrentMessage{UserInputMessage: KiroUserInputMessage{
 			Content: fallbackContent,
@@ -280,20 +300,14 @@ func BuildKiroPayload(claudeBody []byte, modelID, profileArn, origin string, isA
 	}
 
 	// Build inferenceConfig if we have any inference parameters
-	// Note: Kiro API doesn't actually use max_tokens for thinking budget
+	// DISABLED: Kiro API returns 400 "Improperly formed request" when inferenceConfig is present.
+	// Keeping the parsing logic for future use when Kiro API supports it.
 	var inferenceConfig *KiroInferenceConfig
-	if maxTokens > 0 || hasTemperature || hasTopP {
-		inferenceConfig = &KiroInferenceConfig{}
-		if maxTokens > 0 {
-			inferenceConfig.MaxTokens = int(maxTokens)
-		}
-		if hasTemperature {
-			inferenceConfig.Temperature = temperature
-		}
-		if hasTopP {
-			inferenceConfig.TopP = topP
-		}
-	}
+	_ = maxTokens
+	_ = hasTemperature
+	_ = temperature
+	_ = hasTopP
+	_ = topP
 
 	// Session IDs: extract from messages[].additional_kwargs (LangChain format) or random
 	conversationID := extractMetadataFromMessages(messages, "conversationId")
@@ -737,10 +751,15 @@ func processMessages(messages gjson.Result, modelID, origin string) ([]KiroHisto
 func buildFinalContent(content, systemPrompt string, toolResults []KiroToolResult) string {
 	var contentBuilder strings.Builder
 
-	if systemPrompt != "" {
+	if systemPrompt != "" && kirocommon.IsSystemPromptInjectEnabled() {
 		contentBuilder.WriteString("--- SYSTEM PROMPT ---\n")
 		contentBuilder.WriteString(systemPrompt)
 		contentBuilder.WriteString("\n--- END SYSTEM PROMPT ---\n\n")
+		log.Debugf("kiro: system prompt injected into user message content (len=%d)", len(systemPrompt))
+	} else if systemPrompt != "" {
+		log.Debugf("kiro: system prompt dropped (inject disabled, len=%d)", len(systemPrompt))
+	} else {
+		log.Debugf("kiro: no system prompt present")
 	}
 
 	contentBuilder.WriteString(content)

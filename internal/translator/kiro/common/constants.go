@@ -1,6 +1,8 @@
 // Package common provides shared constants and utilities for Kiro translator.
 package common
 
+import "sync/atomic"
+
 const (
 	// KiroMaxToolDescLen is the maximum description length for Kiro API tools.
 	// Kiro API limit is 10240 bytes, leave room for "..."
@@ -93,3 +95,28 @@ You MUST follow these rules for ALL file operations. Violation causes server tim
 
 REMEMBER: When in doubt, write LESS per operation. Multiple small operations > one large operation.`
 )
+
+// systemPromptInjectEnabled controls whether system prompts are wrapped with
+// --- SYSTEM PROMPT --- markers and injected into Kiro user messages.
+// Default: 1 (enabled). Set to 0 to completely drop system prompts.
+var systemPromptInjectEnabled atomic.Int32
+
+func init() {
+	systemPromptInjectEnabled.Store(0)
+}
+
+// SetSystemPromptInjectEnabled configures whether system prompts should be
+// injected into Kiro user messages. When false, system prompts are dropped
+// entirely — Kiro API will not see any system instructions.
+func SetSystemPromptInjectEnabled(enabled bool) {
+	if enabled {
+		systemPromptInjectEnabled.Store(1)
+	} else {
+		systemPromptInjectEnabled.Store(0)
+	}
+}
+
+// IsSystemPromptInjectEnabled reports whether system prompt injection is active.
+func IsSystemPromptInjectEnabled() bool {
+	return systemPromptInjectEnabled.Load() == 1
+}

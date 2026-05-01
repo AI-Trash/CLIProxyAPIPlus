@@ -976,6 +976,11 @@ func (s *Service) registerModelsForAuth(a *coreauth.Auth) {
 		models = applyExcludedModels(models, excluded)
 	case "kiro":
 		models = s.fetchKiroModels(a)
+		// Filter out agentic variants when system prompt injection is disabled,
+		// since the agentic prompt is delivered via system prompt injection.
+		if s.cfg.KiroSystemPromptInjectEnable == nil || !*s.cfg.KiroSystemPromptInjectEnable {
+			models = filterAgenticVariants(models)
+		}
 		models = applyExcludedModels(models, excluded)
 	case "kilo":
 		models = executor.FetchKiloModels(context.Background(), a, s.cfg)
@@ -1762,6 +1767,20 @@ func formatKiroDisplayName(modelName string, rateMultiplier float64) string {
 	}
 
 	return displayName
+}
+
+// filterAgenticVariants removes -agentic model variants from the list.
+// Used when system prompt injection is disabled, since the agentic prompt
+// is delivered via system prompt injection and would have no effect.
+func filterAgenticVariants(models []*ModelInfo) []*ModelInfo {
+	result := make([]*ModelInfo, 0, len(models))
+	for _, m := range models {
+		if m != nil && strings.HasSuffix(m.ID, "-agentic") {
+			continue
+		}
+		result = append(result, m)
+	}
+	return result
 }
 
 // generateKiroAgenticVariants generates agentic variants for Kiro models.
