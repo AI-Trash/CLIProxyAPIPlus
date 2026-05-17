@@ -241,6 +241,7 @@ func (e *QoderExecutor) ExecuteStream(ctx context.Context, authRecord *cliproxya
 			data := bytes.TrimPrefix(line, []byte("data:"))
 			data = bytes.TrimPrefix(data, []byte(" "))
 			if bytes.Equal(data, []byte("[DONE]")) {
+				emitDone(ctx, out, opts.SourceFormat, req.Model, opts.OriginalRequest, payload)
 				return
 			}
 			if debugFile != nil {
@@ -274,6 +275,7 @@ func (e *QoderExecutor) ExecuteStream(ctx context.Context, authRecord *cliproxya
 				continue
 			}
 			if innerStr == "[DONE]" {
+				emitDone(ctx, out, opts.SourceFormat, req.Model, opts.OriginalRequest, payload)
 				return
 			}
 			var inner map[string]interface{}
@@ -284,8 +286,37 @@ func (e *QoderExecutor) ExecuteStream(ctx context.Context, authRecord *cliproxya
 			if err != nil {
 				continue
 			}
-			out <- cliproxyexecutor.StreamChunk{Payload: chunkBytes}
+			// Wrap as a standard SSE "data: ...\n\n" line. This is the
+			// format TranslateStream expects when from=OpenAI, and also
+			// the format OpenAI clients consume directly.
+			ssePayload := append([]byte("data: "), chunkBytes...)
+			ssePayload = append(ssePayload, []byte("\n\n")...)
+
+			// Translate the OpenAI-formatted chunk back to the client's
+			// SourceFormat (Anthropic/Gemini/etc). When the client expects
+			// OpenAI we still pass through TranslateStream — it's a no-op
+			// that returns the same SSE line; for cross-format it produces
+			// "event: content_block_delta\ndata: {...}\n\n" frames.
+			if opts.SourceFormat != "" && opts.SourceFormat != sdktranslator.FormatOpenAI {
+				var param any
+				framed := sdktranslator.TranslateStream(ctx,
+					sdktranslator.FormatOpenAI, opts.SourceFormat,
+					req.Model, opts.OriginalRequest, payload, ssePayload, &param)
+				for _, frame := range framed {
+					select {
+					case out <- cliproxyexecutor.StreamChunk{Payload: frame}:
+					case <-ctx.Done():
+						return
+					}
+				}
+				continue
+			}
+			out <- cliproxyexecutor.StreamChunk{Payload: ssePayload}
 		}
+		// Scanner loop exited naturally (EOF). Emit a terminating
+		// "data: [DONE]" / Anthropic message_stop frame so the client
+		// closes the stream cleanly.
+		emitDone(ctx, out, opts.SourceFormat, req.Model, opts.OriginalRequest, payload)
 		// Check for scanner errors
 		if err := scanner.Err(); err != nil {
 			out <- cliproxyexecutor.StreamChunk{Err: fmt.Errorf("scanner error: %w", err)}
@@ -462,6 +493,32 @@ func buildOpenAIChunk(inner map[string]interface{}, model string) ([]byte, error
 		}
 	}
 	return json.Marshal(inner)
+}
+
+// emitDone publishes a terminating SSE frame to the chunk channel. For
+// OpenAI clients that's plain "data: [DONE]\n\n"; for cross-format clients
+// (Anthropic/Gemini) we let TranslateStream produce the format-specific
+// stream-end events (message_stop / generationComplete / etc).
+func emitDone(ctx context.Context, out chan<- cliproxyexecutor.StreamChunk,
+	sourceFormat sdktranslator.Format, reqModel string, originalReq, body []byte) {
+	if sourceFormat != "" && sourceFormat != sdktranslator.FormatOpenAI {
+		var param any
+		framed := sdktranslator.TranslateStream(ctx,
+			sdktranslator.FormatOpenAI, sourceFormat,
+			reqModel, originalReq, body, []byte("[DONE]"), &param)
+		for _, frame := range framed {
+			select {
+			case out <- cliproxyexecutor.StreamChunk{Payload: frame}:
+			case <-ctx.Done():
+				return
+			}
+		}
+		return
+	}
+	select {
+	case out <- cliproxyexecutor.StreamChunk{Payload: []byte("data: [DONE]\n\n")}:
+	case <-ctx.Done():
+	}
 }
 
 // qoderStatusError implements StatusError for Qoder API errors
