@@ -339,10 +339,10 @@ func BuildAuthHeaders(body []byte, requestURL string, creds CosyCredentials) (*C
 		CosyBodyHash:       bodyHash,
 		CosyBodyLength:     bodyLen,
 		CosySigPath:        sigPath,
-		CosyDataPolicy:     "AGREE",
+		CosyDataPolicy:     QoderDataPolicy,
 		CosyOrganizationID: "",
 		CosyOrgTags:        "",
-		LoginVersion:       "v2",
+		LoginVersion:       QoderLoginVersion,
 		XRequestID:         uuid.New().String(),
 	}, nil
 }
@@ -382,18 +382,26 @@ func formatExpiresAt(expireMs int64) string {
 	return time.Unix(0, expireMs*int64(time.Millisecond)).Format(time.RFC3339)
 }
 
-// parseExpiresAt parses an RFC3339 timestamp or a Unix-millisecond integer string
-// into Unix milliseconds. Falls back to "now + 30 days" if the input is unparseable.
-func parseExpiresAt(s string) int64 {
+// parseExpiresAt converts a Qoder upstream expiry hint into Unix
+// milliseconds. The hint can be:
+//
+//   - an RFC3339 timestamp (e.g. "2026-06-16T07:15:04Z")
+//   - a Unix-millisecond integer string (e.g. "1781594470000")
+//   - empty / unparseable, in which case it falls back to a positive
+//     expiresInSeconds (seconds from now), and finally to "now + 30 days"
+//     when neither is provided.
+func parseExpiresAt(s string, expiresInSeconds int64) int64 {
 	s = strings.TrimSpace(s)
-
-	if t, err := time.Parse(time.RFC3339, s); err == nil {
-		return t.UnixMilli()
+	if s != "" {
+		if t, err := time.Parse(time.RFC3339, s); err == nil {
+			return t.UnixMilli()
+		}
+		if ms, err := strconv.ParseInt(s, 10, 64); err == nil && ms > 0 {
+			return ms
+		}
 	}
-
-	if ms, err := strconv.ParseInt(s, 10, 64); err == nil && ms > 0 {
-		return ms
+	if expiresInSeconds > 0 {
+		return time.Now().Add(time.Duration(expiresInSeconds) * time.Second).UnixMilli()
 	}
-
 	return time.Now().Add(30 * 24 * time.Hour).UnixMilli()
 }

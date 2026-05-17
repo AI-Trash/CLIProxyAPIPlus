@@ -40,12 +40,15 @@ const (
 	// builds pass 0.14.2 (IDE) and qoder2api passes 0.1.43 — server accepts
 	// any of these as long as headers are consistent. Bump cautiously.
 	QoderIDEVersion = "0.2.16"
-	// QoderCLIVersion is the deprecated alias kept for backward compatibility
-	// with earlier code that referenced this constant.
-	QoderCLIVersion = QoderIDEVersion
 	// QoderClientType is the client type advertised in the Cosy-Clienttype
 	// header. NPM qodercli (0.2.16) sends "5" (CLI). IDE/web sends "0".
 	QoderClientType = "5"
+	// QoderDataPolicy is the value sent in the Cosy-Data-Policy header —
+	// the server uses it to decide whether to log requests for training.
+	QoderDataPolicy = "AGREE"
+	// QoderLoginVersion is the value sent in the Login-Version header.
+	// "v2" is what current qodercli/IDE builds advertise.
+	QoderLoginVersion = "v2"
 	// QoderMachineOS is the machine OS identifier sent in COSY headers.
 	// qodercli's signing scheme treats this as a fixed magic string; the
 	// real client sends "x86_64_windows" regardless of host OS.
@@ -113,23 +116,6 @@ type DeviceFlowPollResponse struct {
 // Treated as the same shape as the poll response until proven otherwise; if the
 // upstream returns a different schema we'll see it via the empty-token error.
 type RefreshTokenResponse = DeviceFlowPollResponse
-
-// computeExpireMs converts the upstream expires_at (RFC3339 string) and
-// expires_in (seconds-from-now) fields into a single Unix-millisecond
-// timestamp. expires_at wins when both are present; expires_in is used as a
-// fallback. Returns 0 if neither yields a valid future timestamp.
-func computeExpireMs(expiresAt string, expiresInSeconds int64) int64 {
-	expiresAt = strings.TrimSpace(expiresAt)
-	if expiresAt != "" {
-		if t, err := time.Parse(time.RFC3339, expiresAt); err == nil {
-			return t.UnixMilli()
-		}
-	}
-	if expiresInSeconds > 0 {
-		return time.Now().Add(time.Duration(expiresInSeconds) * time.Second).UnixMilli()
-	}
-	return 0
-}
 
 // UserInfoResponse represents the response from /api/v1/userinfo. The endpoint
 // returns a flat JSON object (no "data" wrapper):
@@ -270,7 +256,7 @@ func (qa *QoderAuth) PollForToken(ctx context.Context, deviceFlow *DeviceFlowRes
 			return nil, fmt.Errorf("device token poll returned empty access token; raw response keys may have changed")
 		}
 
-		expireMs := computeExpireMs(response.ExpiresAt, response.ExpiresIn)
+		expireMs := parseExpiresAt(response.ExpiresAt, response.ExpiresIn)
 
 		return &QoderTokenData{
 			AccessToken:  response.Token,
@@ -334,7 +320,7 @@ func (qa *QoderAuth) RefreshTokens(ctx context.Context, accessToken, refreshToke
 		return nil, fmt.Errorf("token refresh returned empty access token; raw response keys may have changed")
 	}
 
-	expireMs := computeExpireMs(response.ExpiresAt, response.ExpiresIn)
+	expireMs := parseExpiresAt(response.ExpiresAt, response.ExpiresIn)
 
 	return &QoderTokenData{
 		AccessToken:  response.Token,

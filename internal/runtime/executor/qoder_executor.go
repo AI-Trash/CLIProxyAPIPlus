@@ -51,15 +51,12 @@ func (e *QoderExecutor) ExecuteStream(ctx context.Context, authRecord *cliproxya
 		return nil, fmt.Errorf("invalid auth storage type for qoder: %T", authRecord.Storage)
 	}
 
-	// Check if token needs refresh
-	bufferSeconds := int64(600) // 10 minutes
-	authFilePath := ""
-	if authRecord.Attributes != nil {
-		authFilePath = strings.TrimSpace(authRecord.Attributes["path"])
-	}
-	if err := qoderauth.RefreshTokenIfNeeded(ctx, e.cfg, storage, bufferSeconds, authFilePath); err != nil {
-		log.Warnf("Qoder token refresh failed: %v", err)
-	}
+	// Note: Qoder device tokens are long-lived (~30 days) and the upstream
+	// /algo/api/v3/user/refresh_token endpoint returns 403 for them — see
+	// QoderExecutor.Refresh's no-op rationale. We deliberately do not call
+	// RefreshTokenIfNeeded per request: it would just produce a 403 in the
+	// log on every chat call. Token expiry is handled by the user re-running
+	// --qoder-login.
 
 	// Translate non-openai formats to chat completions before extracting messages
 	payload := req.Payload
@@ -204,10 +201,9 @@ func (e *QoderExecutor) ExecuteStream(ctx context.Context, authRecord *cliproxya
 		defer close(out)
 		defer func() { _ = httpResp.Body.Close() }()
 
-		// streamParam threads stateful translator data (e.g. whether
-		// message_start / content_block_start has been emitted yet) across
-		// every chunk in this stream. Re-creating it per chunk caused the
-		// translator to re-emit the opening events for every delta.
+		// Shared across all TranslateStream calls in this stream — the
+		// translator carries open-block / sequence state through it; a
+		// per-chunk var would re-emit message_start on every delta.
 		var streamParam any
 
 		var debugFile *os.File
@@ -377,6 +373,11 @@ func extractContentGeneric(content interface{}) string {
 	}
 }
 
+// normalizeQoderMessages clones each message and flattens its content from
+// the Anthropic / OpenAI multipart shape ([{type:"text",text:"..."}]) into
+// the plain string Qoder's chat endpoint expects. Other fields — role,
+// tool_calls, tool_call_id, name — pass through verbatim so multi-turn
+// tool conversations remain in canonical OpenAI shape.
 func normalizeQoderMessages(messages []interface{}) []interface{} {
 	if len(messages) == 0 {
 		return nil
@@ -387,41 +388,12 @@ func normalizeQoderMessages(messages []interface{}) []interface{} {
 		if !ok {
 			continue
 		}
-		role, _ := msgMap["role"].(string)
-		switch role {
-		case "tool":
-			// OpenAI-style tool result. Forward as a real role:"tool" message
-			// with the matching tool_call_id so the server can stitch it back
-			// onto the prior assistant tool_calls turn.
-			cloned := make(map[string]interface{}, len(msgMap)+1)
-			for k, v := range msgMap {
-				cloned[k] = v
-			}
-			cloned["content"] = extractContentGeneric(msgMap["content"])
-			out = append(out, cloned)
-		case "assistant":
-			// Pass assistant turns through verbatim (after flattening any
-			// content parts to text). tool_calls is preserved as-is so the
-			// server sees the canonical OpenAI structure rather than a
-			// "Called tool: ..." text reconstruction.
-			cloned := make(map[string]interface{}, len(msgMap))
-			for k, v := range msgMap {
-				cloned[k] = v
-			}
-			cloned["content"] = extractContentGeneric(msgMap["content"])
-			out = append(out, cloned)
-		default:
-			// Qoder's chat endpoint expects `content` to be a plain string.
-			// Anthropic / OpenAI multipart format ([{type:"text",text:"..."}])
-			// confuses the server — it ends up showing the literal JSON to
-			// the model. Flatten to text here.
-			cloned := make(map[string]interface{}, len(msgMap))
-			for k, v := range msgMap {
-				cloned[k] = v
-			}
-			cloned["content"] = extractContentGeneric(msgMap["content"])
-			out = append(out, cloned)
+		cloned := make(map[string]interface{}, len(msgMap))
+		for k, v := range msgMap {
+			cloned[k] = v
 		}
+		cloned["content"] = extractContentGeneric(msgMap["content"])
+		out = append(out, cloned)
 	}
 	return out
 }
@@ -677,14 +649,12 @@ func (e *QoderExecutor) Execute(ctx context.Context, authRecord *cliproxyauth.Au
 
 	responseBytes, _ := json.Marshal(response)
 
-	// Translate the Qoder OpenAI-format response back to the client's expected
-	// SourceFormat (mirrors the TranslateNonStream flow used by every other executor).
+	// Translate the Qoder OpenAI-format response back to the client's
+	// expected SourceFormat. Reuse internalReq.Payload — that's already
+	// the OpenAI-translated payload we computed above before calling
+	// ExecuteStream, so we don't need to re-translate.
 	var param any
-	requestPayload := req.Payload
-	if opts.SourceFormat != "" && opts.SourceFormat != sdktranslator.FormatOpenAI {
-		requestPayload = sdktranslator.TranslateRequest(opts.SourceFormat, sdktranslator.FormatOpenAI, req.Model, req.Payload, false)
-	}
-	out := sdktranslator.TranslateNonStream(ctx, sdktranslator.FormatOpenAI, opts.SourceFormat, req.Model, opts.OriginalRequest, requestPayload, responseBytes, &param)
+	out := sdktranslator.TranslateNonStream(ctx, sdktranslator.FormatOpenAI, opts.SourceFormat, req.Model, opts.OriginalRequest, internalReq.Payload, responseBytes, &param)
 	responseBytes = out
 
 	return cliproxyexecutor.Response{
@@ -763,12 +733,14 @@ func (e *QoderExecutor) HttpRequest(ctx context.Context, auth *cliproxyauth.Auth
 // for a model the server doesn't expose. Either way we should fail loudly
 // rather than guess and silently get downgraded to a different model.
 func buildQoderModelConfig(storage *qoderauth.QoderTokenStorage, modelKey string) (map[string]interface{}, error) {
-	if storage == nil || len(storage.ModelConfigs) == 0 {
-		return nil, fmt.Errorf("qoder: model config cache is empty (model list not fetched yet); restart the service or check /algo/api/v2/model/list connectivity")
-	}
-	raw, ok := storage.ModelConfigs[modelKey]
+	raw, ok := storage.GetModelConfig(modelKey)
 	if !ok || len(raw) == 0 {
-		return nil, fmt.Errorf("qoder: no model_config cached for %q; known models: %s", modelKey, sortedKeys(storage.ModelConfigs))
+		keys := storage.ModelConfigKeys()
+		if len(keys) == 0 {
+			return nil, fmt.Errorf("qoder: model config cache is empty (model list not fetched yet); restart the service or check /algo/api/v2/model/list connectivity")
+		}
+		sort.Strings(keys)
+		return nil, fmt.Errorf("qoder: no model_config cached for %q; known models: %s", modelKey, strings.Join(keys, ", "))
 	}
 	var cfg map[string]interface{}
 	if err := json.Unmarshal(raw, &cfg); err != nil {
@@ -781,19 +753,6 @@ func buildQoderModelConfig(storage *qoderauth.QoderTokenStorage, modelKey string
 	// we're sending (handles model alias rewrites in caller).
 	cfg["key"] = modelKey
 	return cfg, nil
-}
-
-// sortedKeys returns the keys of m in stable order, suitable for error messages.
-func sortedKeys(m map[string]json.RawMessage) string {
-	if len(m) == 0 {
-		return "<none>"
-	}
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return strings.Join(keys, ", ")
 }
 
 // FetchQoderModels retrieves the live model list from Qoder's
@@ -910,10 +869,11 @@ func FetchQoderModels(ctx context.Context, auth *cliproxyauth.Auth, cfg *config.
 	}
 
 	// Persist the cached configs onto the auth's storage so subsequent
-	// ExecuteStream calls can read them. We don't write the file here —
-	// the framework's persist hook will pick this up on the next save.
-	if storage, ok := auth.Storage.(*qoderauth.QoderTokenStorage); ok && storage != nil {
-		storage.ModelConfigs = configs
+	// ExecuteStream calls can read them. SetModelConfigs swaps the entire
+	// map under a write lock; readers (buildQoderModelConfig) take a read
+	// lock so they never see a half-built map.
+	if storage, ok := auth.Storage.(*qoderauth.QoderTokenStorage); ok {
+		storage.SetModelConfigs(configs)
 	}
 
 	log.Infof("qoder: fetched %d models from /algo/api/v2/model/list", len(models))

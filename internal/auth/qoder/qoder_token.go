@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/misc"
@@ -38,21 +39,70 @@ type QoderTokenStorage struct {
 	MachineType string `json:"machine_type,omitempty"`
 	// ModelConfigs caches the raw upstream model_config entries from the most
 	// recent /algo/api/v2/model/list response, keyed by model id (e.g.
-	// "dfmodel" -> {"key":"dfmodel","format":"openai","is_vl":true,
-	// "is_reasoning":true,"max_input_tokens":180000,...}). The executor
-	// passes the cached entry through to chat requests so per-model fields
-	// (is_vl, is_reasoning, max_input_tokens, price_factor, ...) match what
-	// the server published rather than a hard-coded average.
+	// "dfmodel" -> {"key":"dfmodel","format":"openai","is_vl":true, ...}).
+	// Persisted to disk so per-model fields survive restarts; mutated through
+	// SetModelConfigs / GetModelConfig only so concurrent FetchQoderModels +
+	// chat traffic never race on the underlying map.
 	ModelConfigs map[string]json.RawMessage `json:"model_configs,omitempty"`
 
 	// Metadata holds arbitrary key-value pairs injected via hooks.
 	// It is not exported to JSON directly to allow flattening during serialization.
 	Metadata map[string]any `json:"-"`
+
+	// modelConfigMu guards ModelConfigs against concurrent
+	// FetchQoderModels writes vs ExecuteStream reads. The map fetched
+	// from /algo/api/v2/model/list is replaced wholesale, but the lookup
+	// path (GetModelConfig) still reads it during chat requests.
+	modelConfigMu sync.RWMutex `json:"-"`
 }
 
 // SetMetadata allows external callers to inject metadata into the storage before saving.
 func (ts *QoderTokenStorage) SetMetadata(meta map[string]any) {
 	ts.Metadata = meta
+}
+
+// SetModelConfigs replaces the cached per-model configs atomically.
+// Callers (FetchQoderModels) hand in the freshly-fetched table; readers
+// (ExecuteStream via GetModelConfig) see either the previous full set or
+// the new full set, never a half-built map.
+func (ts *QoderTokenStorage) SetModelConfigs(configs map[string]json.RawMessage) {
+	if ts == nil {
+		return
+	}
+	ts.modelConfigMu.Lock()
+	ts.ModelConfigs = configs
+	ts.modelConfigMu.Unlock()
+}
+
+// GetModelConfig returns the cached upstream model entry for the given key
+// (or false if no fetch has populated the cache yet / the key is unknown).
+// The returned RawMessage is safe to read; callers must not mutate it.
+func (ts *QoderTokenStorage) GetModelConfig(key string) (json.RawMessage, bool) {
+	if ts == nil {
+		return nil, false
+	}
+	ts.modelConfigMu.RLock()
+	defer ts.modelConfigMu.RUnlock()
+	raw, ok := ts.ModelConfigs[key]
+	return raw, ok
+}
+
+// ModelConfigKeys returns the sorted list of cached model keys (used in
+// error messages). Locks ModelConfigs while building the slice.
+func (ts *QoderTokenStorage) ModelConfigKeys() []string {
+	if ts == nil {
+		return nil
+	}
+	ts.modelConfigMu.RLock()
+	defer ts.modelConfigMu.RUnlock()
+	if len(ts.ModelConfigs) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(ts.ModelConfigs))
+	for k := range ts.ModelConfigs {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 // SaveTokenToFile serializes the Qoder token storage to a JSON file.

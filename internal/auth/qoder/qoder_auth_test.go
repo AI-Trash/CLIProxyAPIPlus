@@ -369,17 +369,17 @@ func TestIsExpired(t *testing.T) {
 func TestParseExpiresAt(t *testing.T) {
 	// RFC3339 format
 	rfc3339 := "2026-02-20T00:00:00Z"
-	result := parseExpiresAt(rfc3339)
+	result := parseExpiresAt(rfc3339, 0)
 	assert.Greater(t, result, int64(0))
 
 	// Milliseconds format
 	ms := "1776902400000"
-	result = parseExpiresAt(ms)
+	result = parseExpiresAt(ms, 0)
 	assert.Greater(t, result, int64(0))
 
 	// Invalid format - should return default (now + 30 days)
 	invalid := "invalid"
-	result = parseExpiresAt(invalid)
+	result = parseExpiresAt(invalid, 0)
 	assert.Greater(t, result, time.Now().UnixMilli())
 }
 
