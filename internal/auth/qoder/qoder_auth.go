@@ -37,12 +37,12 @@ const (
 
 // QoderTokenData represents the OAuth credentials from device flow polling
 type QoderTokenData struct {
-	AccessToken  string `json:"token"`
+	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 	ExpireTime   int64  `json:"expire_time"`
 	UserID       string `json:"user_id"`
-	MachineToken string `json:"machine_token"`
-	MachineType  string `json:"machine_type"`
+	MachineToken string `json:"machineToken"`
+	MachineType  string `json:"machineType"`
 }
 
 // DeviceFlowResponse represents the response from the device authorization endpoint
@@ -57,17 +57,48 @@ type DeviceFlowResponse struct {
 	MachineID string `json:"machine_id"`
 }
 
-// DeviceFlowPollResponse represents the token response from polling endpoint
+// DeviceFlowPollResponse represents the token response from the polling endpoint.
+//
+// The upstream JSON keys are inconsistent across endpoints (poll vs refresh)
+// and across observed payloads — we accept both snake_case and camelCase
+// variants for the same logical field, then merge in selectAccessToken /
+// selectMachineToken below. Empty zero-value fields lose to non-empty ones.
 type DeviceFlowPollResponse struct {
 	Data struct {
-		Token         string `json:"token"`
-		RefreshToken  string `json:"refresh_token"`
-		ExpireTime    int64  `json:"expire_time"`
-		ExpireTimeStr string `json:"expireTime"`
-		UserID        string `json:"user_id"`
-		MachineToken  string `json:"machine_token"`
-		MachineType   string `json:"machineType"`
+		AccessToken      string `json:"access_token"`
+		Token            string `json:"token"`
+		RefreshToken     string `json:"refresh_token"`
+		RefreshTokenAlt  string `json:"refreshToken"`
+		ExpireTime       int64  `json:"expire_time"`
+		ExpireTimeAlt    int64  `json:"expireTime"`
+		ExpiresAt        int64  `json:"expires_at"`
+		ExpireTimeStr    string `json:"expireTimeStr"`
+		ExpiresAtStr     string `json:"expires_at_str"`
+		UserID           string `json:"user_id"`
+		UserIDAlt        string `json:"userId"`
+		MachineToken     string `json:"machineToken"`
+		MachineTokenSnek string `json:"machine_token"`
+		MachineType      string `json:"machineType"`
+		MachineTypeSnek  string `json:"machine_type"`
 	} `json:"data"`
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func firstNonZero(values ...int64) int64 {
+	for _, v := range values {
+		if v != 0 {
+			return v
+		}
+	}
+	return 0
 }
 
 // UserInfoResponse represents the response from user info endpoint
@@ -79,13 +110,19 @@ type UserInfoResponse struct {
 	} `json:"data"`
 }
 
-// RefreshTokenResponse represents the response from refresh token endpoint
+// RefreshTokenResponse represents the response from the refresh-token endpoint.
+// Tolerates the same snake_case / camelCase split as DeviceFlowPollResponse.
 type RefreshTokenResponse struct {
 	Data struct {
-		Token         string `json:"token"`
-		RefreshToken  string `json:"refresh_token"`
-		ExpireTime    int64  `json:"expire_time"`
-		ExpireTimeStr string `json:"expireTime"`
+		AccessToken     string `json:"access_token"`
+		Token           string `json:"token"`
+		RefreshToken    string `json:"refresh_token"`
+		RefreshTokenAlt string `json:"refreshToken"`
+		ExpireTime      int64  `json:"expire_time"`
+		ExpireTimeAlt   int64  `json:"expireTime"`
+		ExpiresAt       int64  `json:"expires_at"`
+		ExpireTimeStr   string `json:"expireTimeStr"`
+		ExpiresAtStr    string `json:"expires_at_str"`
 	} `json:"data"`
 }
 
@@ -207,21 +244,36 @@ func (qa *QoderAuth) PollForToken(ctx context.Context, deviceFlow *DeviceFlowRes
 			return nil, fmt.Errorf("failed to parse token response: %w", err)
 		}
 
-		tokenData := &QoderTokenData{
-			AccessToken:  response.Data.Token,
-			RefreshToken: response.Data.RefreshToken,
-			ExpireTime:   response.Data.ExpireTime,
-			UserID:       response.Data.UserID,
-			MachineToken: response.Data.MachineToken,
-			MachineType:  response.Data.MachineType,
+		access := firstNonEmpty(response.Data.AccessToken, response.Data.Token)
+		refresh := firstNonEmpty(response.Data.RefreshToken, response.Data.RefreshTokenAlt)
+		userID := firstNonEmpty(response.Data.UserID, response.Data.UserIDAlt)
+		machineToken := firstNonEmpty(response.Data.MachineToken, response.Data.MachineTokenSnek)
+		machineType := firstNonEmpty(response.Data.MachineType, response.Data.MachineTypeSnek)
+		expire := firstNonZero(response.Data.ExpireTime, response.Data.ExpireTimeAlt, response.Data.ExpiresAt)
+
+		// If expire time still 0, fall back to string-form fields.
+		if expire == 0 {
+			if str := firstNonEmpty(response.Data.ExpireTimeStr, response.Data.ExpiresAtStr); str != "" {
+				expire = parseExpiresAt(str)
+			}
 		}
 
-		// If expire time is 0, try parsing from string
-		if tokenData.ExpireTime == 0 && response.Data.ExpireTimeStr != "" {
-			tokenData.ExpireTime = parseExpiresAt(response.Data.ExpireTimeStr)
+		// Defensive: surface a clear error if the upstream returned 200 but
+		// the token field is empty. Log raw body at debug level so we can see
+		// the real response shape in deployed logs.
+		if access == "" {
+			log.Debugf("Qoder poll response with empty access token, body: %s", string(body))
+			return nil, fmt.Errorf("device token poll returned empty access token; raw response keys may have changed")
 		}
 
-		return tokenData, nil
+		return &QoderTokenData{
+			AccessToken:  access,
+			RefreshToken: refresh,
+			ExpireTime:   expire,
+			UserID:       userID,
+			MachineToken: machineToken,
+			MachineType:  machineType,
+		}, nil
 	}
 
 	return nil, fmt.Errorf("authentication timeout. Please restart the authentication process")
@@ -273,18 +325,25 @@ func (qa *QoderAuth) RefreshTokens(ctx context.Context, accessToken, refreshToke
 		return nil, fmt.Errorf("failed to parse refresh response: %w", err)
 	}
 
-	tokenData := &QoderTokenData{
-		AccessToken:  response.Data.Token,
-		RefreshToken: response.Data.RefreshToken,
-		ExpireTime:   response.Data.ExpireTime,
+	access := firstNonEmpty(response.Data.AccessToken, response.Data.Token)
+	refresh := firstNonEmpty(response.Data.RefreshToken, response.Data.RefreshTokenAlt)
+	expire := firstNonZero(response.Data.ExpireTime, response.Data.ExpireTimeAlt, response.Data.ExpiresAt)
+	if expire == 0 {
+		if str := firstNonEmpty(response.Data.ExpireTimeStr, response.Data.ExpiresAtStr); str != "" {
+			expire = parseExpiresAt(str)
+		}
 	}
 
-	// If expire time is 0, try parsing from string
-	if tokenData.ExpireTime == 0 && response.Data.ExpireTimeStr != "" {
-		tokenData.ExpireTime = parseExpiresAt(response.Data.ExpireTimeStr)
+	if access == "" {
+		log.Debugf("Qoder refresh response with empty access token, body: %s", string(body))
+		return nil, fmt.Errorf("token refresh returned empty access token; raw response keys may have changed")
 	}
 
-	return tokenData, nil
+	return &QoderTokenData{
+		AccessToken:  access,
+		RefreshToken: refresh,
+		ExpireTime:   expire,
+	}, nil
 }
 
 // FetchUserInfo fetches user information from the API
