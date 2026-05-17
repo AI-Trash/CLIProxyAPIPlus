@@ -81,15 +81,12 @@ func (e *QoderExecutor) ExecuteStream(ctx context.Context, authRecord *cliproxya
 	}
 
 	// Normalize messages: flatten Anthropic/OpenAI multipart content arrays
-	// to plain strings (Qoder's chat endpoint expects content to be a string),
-	// and rewrite tool / assistant-with-tool-calls turns into pseudo-text.
+	// to plain strings (Qoder's chat endpoint expects content to be a string).
+	// tool_calls / role:"tool" turns pass through verbatim — Qoder accepts
+	// the canonical OpenAI structure and emits real tool_use events.
 	messagesRaw, _ := chatReq["messages"].([]interface{})
 	toolsRaw := chatReq["tools"]
 	normalized := normalizeQoderMessages(messagesRaw)
-	prompt := messagesToPromptGeneric(normalized, toolsRaw)
-
-	requestID := uuid.New().String()
-	sessionID := uuid.New().String()
 
 	// Resolve the per-model server-side metadata (is_vl, is_reasoning,
 	// max_input_tokens, ...). Failing here is a hard error — sending the
@@ -99,49 +96,53 @@ func (e *QoderExecutor) ExecuteStream(ctx context.Context, authRecord *cliproxya
 		return nil, err
 	}
 
-	// Build request body for Qoder API (agent router payload)
+	// Last user message text — used by Qoder for the chat_context "current
+	// turn" preview slot. The full conversation still goes through `messages`.
+	lastUser := lastUserText(normalized)
+
+	// Build request body matching Ve-ria/CLIProxyAPIPlus v1.3.7's
+	// buildQoderRequestBody — the minimum shape the upstream actually
+	// looks at. We deliberately do NOT add the speculative camelCase
+	// duplicates (sessionId/questionText/chatTask/etc) that earlier
+	// versions sprayed into the request: the server reads only the
+	// snake_case fields, and the duplicates either get ignored or
+	// confuse the routing logic.
 	reqBody := map[string]interface{}{
-		"requestId":           requestID,
-		"sessionId":           sessionID,
-		"questionText":        prompt,
-		"references":          []interface{}{},
-		"mode":                "agent",
-		"sessionType":         "qodercli",
-		"chatTask":            "FREE_INPUT",
-		"stream":              true,
-		"source":              1,
-		"isReply":             false,
-		"taskDefinitionType":  "system",
-		"codeLanguage":        "",
-		"preferredLanguage":   "English",
-		"closeTypewriter":     true,
-		"pluginPayloadConfig": map[string]interface{}{},
-		"chatContext": map[string]interface{}{
-			"text":              prompt,
-			"localeLang":        "English",
-			"preferredLanguage": "English",
-		},
-		"extra": map[string]interface{}{
-			"modelConfig": map[string]interface{}{
-				"key": qoderModel,
+		"stream":         true,
+		"chat_task":      "FREE_INPUT",
+		"is_reply":       false,
+		"is_retry":       false,
+		"code_language":  "",
+		"source":         1,
+		"version":        "3",
+		"chat_prompt":    "",
+		"session_type":   "qodercli",
+		"agent_id":       "agent_common",
+		"task_id":        "common",
+		"messages":       normalized,
+		"tools":          []interface{}{},
+		"request_id":     uuid.New().String(),
+		"request_set_id": uuid.New().String(),
+		"chat_record_id": uuid.New().String(),
+		"session_id":     uuid.New().String(),
+		"parameters":     map[string]interface{}{"max_tokens": 32768},
+		"chat_context": map[string]interface{}{
+			"chatPrompt": "",
+			"extra": map[string]interface{}{
+				"context":         []interface{}{},
+				"modelConfig":     map[string]interface{}{"key": qoderModel, "is_reasoning": false},
+				"originalContent": map[string]interface{}{"type": "text", "text": lastUser},
 			},
+			"features": []interface{}{},
+			"text":     map[string]interface{}{"type": "text", "text": lastUser},
 		},
-		"request_id":       requestID,
-		"request_set_id":   requestID,
-		"chat_record_id":   requestID,
-		"session_id":       sessionID,
-		"agent_id":         "agent_common",
-		"task_id":          "common",
-		"chat_task":        "FREE_INPUT",
-		"version":          "3",
-		"aliyun_user_type": "personal_standard",
-		"session_type":     "qodercli",
-		"parameters": map[string]interface{}{
-			"max_new_tokens": 16384,
-			"max_tokens":     16384,
+		"model_config": modelConfig,
+		"business": map[string]interface{}{
+			"id":       uuid.New().String(),
+			"type":     "agent_chat_generation",
+			"name":     "",
+			"begin_at": time.Now().UnixMilli(),
 		},
-		"model_config":     modelConfig,
-		"messages":         normalized,
 	}
 	if toolsRaw != nil {
 		reqBody["tools"] = toolsRaw
@@ -329,41 +330,25 @@ func (e *QoderExecutor) ExecuteStream(ctx context.Context, authRecord *cliproxya
 	}, nil
 }
 
-// messagesToPromptGeneric flattens the message history into a plain-text
-// "prompt" that Qoder uses for the questionText / chatContext.text fields.
-// We DO NOT inject any "use this tool by writing 'Called tool: ...'"
-// scaffolding here — Qoder accepts native OpenAI-style tools[] and emits
-// real tool_use events, so prompting the model to use a text format would
-// produce duplicate / mixed-format tool calls.
-func messagesToPromptGeneric(messages []interface{}, tools interface{}) string {
-	_ = tools
-	parts := make([]string, 0, len(messages))
-
-	for _, msg := range messages {
-		msgMap, ok := msg.(map[string]interface{})
+// lastUserText returns the text of the last user message in the (already
+// normalized) message list, or empty when there isn't one. Qoder uses this
+// for the chat_context "current turn" preview slot; the full conversation
+// still travels through the messages array.
+func lastUserText(messages []interface{}) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		msgMap, ok := messages[i].(map[string]interface{})
 		if !ok {
 			continue
 		}
-		role, _ := msgMap["role"].(string)
-		content := extractContentGeneric(msgMap["content"])
-
-		switch role {
-		case "system":
-			parts = append(parts, "[System Instructions]\n"+content)
-		case "assistant":
-			parts = append(parts, "[Previous Assistant Response]\n"+content)
-		case "user":
-			parts = append(parts, content)
-		case "tool":
-			name, _ := msgMap["name"].(string)
-			if name == "" {
-				name = "tool"
-			}
-			parts = append(parts, fmt.Sprintf("[Tool Result for %s]\n%s", name, content))
+		if role, _ := msgMap["role"].(string); role != "user" {
+			continue
 		}
+		if s, ok := msgMap["content"].(string); ok {
+			return s
+		}
+		return extractContentGeneric(msgMap["content"])
 	}
-
-	return strings.Join(parts, "\n\n")
+	return ""
 }
 
 // extractContentGeneric extracts text content from message content field
