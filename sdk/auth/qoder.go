@@ -74,21 +74,25 @@ func (a *QoderAuthenticator) Login(ctx context.Context, cfg *config.Config, opts
 		return nil, fmt.Errorf("qoder authentication failed: %w", err)
 	}
 
-	// Create token storage and resolve user info (best effort).
-	// SaveUserInfo internally fetches via /userinfo if name or email are empty,
-	// so we don't need a separate FetchUserInfo call ahead of it.
+	// Resolve user info (best effort). FetchUserInfo only needs the access
+	// token, so we always attempt it — UserID is informational here.
 	tokenStorage := authSvc.CreateTokenStorage(tokenData, deviceFlow.MachineID)
-	var name, email string
-	if tokenData.UserID != "" {
-		name, email = authSvc.SaveUserInfo(ctx, tokenData.AccessToken, tokenData.UserID, "", "")
-	}
+	name, email := authSvc.SaveUserInfo(ctx, tokenData.AccessToken, tokenData.UserID, "", "")
 
-	// Get email from options if not fetched
+	// If userinfo did not return an email, look in caller-supplied metadata.
 	if email == "" && opts.Metadata != nil {
 		email = opts.Metadata["email"]
 		if email == "" {
 			email = opts.Metadata["alias"]
 		}
+	}
+
+	// Final fallback: use the stable user_id from the token response as the
+	// label so the auth file gets a deterministic, unique name without
+	// requiring interactive input. Only fall through to a prompt when the
+	// upstream truly gave us nothing identifiable.
+	if email == "" {
+		email = strings.TrimSpace(tokenData.UserID)
 	}
 
 	if email == "" && opts.Prompt != nil {
