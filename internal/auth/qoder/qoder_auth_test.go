@@ -5,36 +5,56 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // TestNewQoderAuth tests the constructor with proxy configuration
 func TestNewQoderAuth(t *testing.T) {
 	cfg := &config.Config{}
 	auth := NewQoderAuth(cfg)
-	require.NotNil(t, auth)
-	require.NotNil(t, auth.httpClient)
+	if auth == nil {
+		t.Fatal("NewQoderAuth returned nil")
+	}
+	if auth.httpClient == nil {
+		t.Fatal("NewQoderAuth: httpClient is nil")
+	}
 }
 
 // TestInitiateDeviceFlow tests device flow initiation
 func TestInitiateDeviceFlow(t *testing.T) {
 	auth := NewQoderAuth(&config.Config{})
 	resp, err := auth.InitiateDeviceFlow(context.Background())
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	require.NotEmpty(t, resp.VerificationURIComplete)
-	require.NotEmpty(t, resp.CodeVerifier)
-	require.NotEmpty(t, resp.Nonce)
-	require.NotEmpty(t, resp.MachineID)
-	assert.Contains(t, resp.VerificationURIComplete, QoderLoginURL)
-	assert.Contains(t, resp.VerificationURIComplete, "challenge=")
-	assert.NotContains(t, resp.VerificationURIComplete, "verifier=",
-		"verifier must not leak into the user-visible URL")
+	if err != nil {
+		t.Fatalf("InitiateDeviceFlow returned error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("InitiateDeviceFlow returned nil response")
+	}
+	if resp.VerificationURIComplete == "" {
+		t.Error("VerificationURIComplete is empty")
+	}
+	if resp.CodeVerifier == "" {
+		t.Error("CodeVerifier is empty")
+	}
+	if resp.Nonce == "" {
+		t.Error("Nonce is empty")
+	}
+	if resp.MachineID == "" {
+		t.Error("MachineID is empty")
+	}
+	if !strings.Contains(resp.VerificationURIComplete, QoderLoginURL) {
+		t.Errorf("VerificationURIComplete %q does not contain %q", resp.VerificationURIComplete, QoderLoginURL)
+	}
+	if !strings.Contains(resp.VerificationURIComplete, "challenge=") {
+		t.Errorf("VerificationURIComplete %q missing challenge=", resp.VerificationURIComplete)
+	}
+	if strings.Contains(resp.VerificationURIComplete, "verifier=") {
+		t.Errorf("VerificationURIComplete %q must not leak verifier", resp.VerificationURIComplete)
+	}
 }
 
 // TestPollForToken_Success tests successful token polling
@@ -70,8 +90,12 @@ func TestPollForToken_Success(t *testing.T) {
 	tokenData, err := auth.PollForToken(ctx, deviceFlow)
 	// This will timeout because we can't override the endpoint URL
 	// Just verify it doesn't panic
-	assert.Error(t, err)
-	assert.Nil(t, tokenData)
+	if err == nil {
+		t.Error("expected error due to non-overridable endpoint, got nil")
+	}
+	if tokenData != nil {
+		t.Errorf("expected nil tokenData, got %+v", tokenData)
+	}
 }
 
 // TestPollForToken_Timeout tests timeout after max attempts
@@ -94,8 +118,12 @@ func TestPollForToken_Timeout(t *testing.T) {
 	defer cancel()
 
 	tokenData, err := auth.PollForToken(ctx, deviceFlow)
-	assert.Error(t, err)
-	assert.Nil(t, tokenData)
+	if err == nil {
+		t.Error("expected timeout error, got nil")
+	}
+	if tokenData != nil {
+		t.Errorf("expected nil tokenData, got %+v", tokenData)
+	}
 }
 
 // TestPollForToken_ContextCancel tests context cancellation
@@ -119,8 +147,12 @@ func TestPollForToken_ContextCancel(t *testing.T) {
 	cancel() // Cancel immediately
 
 	tokenData, err := auth.PollForToken(ctx, deviceFlow)
-	assert.Error(t, err)
-	assert.Nil(t, tokenData)
+	if err == nil {
+		t.Error("expected context-cancelled error, got nil")
+	}
+	if tokenData != nil {
+		t.Errorf("expected nil tokenData, got %+v", tokenData)
+	}
 }
 
 // TestPollForToken_HTTPError tests handling of HTTP errors
@@ -144,8 +176,12 @@ func TestPollForToken_HTTPError(t *testing.T) {
 	defer cancel()
 
 	tokenData, err := auth.PollForToken(ctx, deviceFlow)
-	assert.Error(t, err)
-	assert.Nil(t, tokenData)
+	if err == nil {
+		t.Error("expected HTTP error, got nil")
+	}
+	if tokenData != nil {
+		t.Errorf("expected nil tokenData, got %+v", tokenData)
+	}
 }
 
 // TestPollForToken_InvalidJSON tests handling of malformed JSON
@@ -169,8 +205,12 @@ func TestPollForToken_InvalidJSON(t *testing.T) {
 	defer cancel()
 
 	tokenData, err := auth.PollForToken(ctx, deviceFlow)
-	assert.Error(t, err)
-	assert.Nil(t, tokenData)
+	if err == nil {
+		t.Error("expected JSON parse error, got nil")
+	}
+	if tokenData != nil {
+		t.Errorf("expected nil tokenData, got %+v", tokenData)
+	}
 }
 
 // TestPollForToken_NonOKStatus tests handling of non-200 status codes
@@ -194,8 +234,12 @@ func TestPollForToken_NonOKStatus(t *testing.T) {
 	defer cancel()
 
 	tokenData, err := auth.PollForToken(ctx, deviceFlow)
-	assert.Error(t, err)
-	assert.Nil(t, tokenData)
+	if err == nil {
+		t.Error("expected non-OK status error, got nil")
+	}
+	if tokenData != nil {
+		t.Errorf("expected nil tokenData, got %+v", tokenData)
+	}
 }
 
 // TestRefreshTokens_Success tests successful token refresh
@@ -208,8 +252,12 @@ func TestRefreshTokens_Success(t *testing.T) {
 	// to the real endpoint. We're just testing that the function doesn't panic
 	// and returns an error (since we're using invalid credentials).
 	tokenData, err := auth.RefreshTokens(ctx, "old_token", "old_refresh")
-	assert.Error(t, err)
-	assert.Nil(t, tokenData)
+	if err == nil {
+		t.Error("expected error from invalid refresh, got nil")
+	}
+	if tokenData != nil {
+		t.Errorf("expected nil tokenData, got %+v", tokenData)
+	}
 }
 
 // TestRefreshTokens_Failure tests token refresh failure
@@ -219,8 +267,12 @@ func TestRefreshTokens_Failure(t *testing.T) {
 	defer cancel()
 
 	tokenData, err := auth.RefreshTokens(ctx, "old_token", "old_refresh")
-	assert.Error(t, err)
-	assert.Nil(t, tokenData)
+	if err == nil {
+		t.Error("expected error from invalid refresh, got nil")
+	}
+	if tokenData != nil {
+		t.Errorf("expected nil tokenData, got %+v", tokenData)
+	}
 }
 
 // TestRefreshTokensWithRetry_Success tests successful refresh after retry
@@ -232,8 +284,12 @@ func TestRefreshTokensWithRetry_Success(t *testing.T) {
 	// This will fail because we can't actually make HTTP requests
 	// We're just testing that the function doesn't panic
 	tokenData, err := auth.RefreshTokensWithRetry(ctx, "old_token", "old_refresh", 2)
-	assert.Error(t, err)
-	assert.Nil(t, tokenData)
+	if err == nil {
+		t.Error("expected error from invalid retry, got nil")
+	}
+	if tokenData != nil {
+		t.Errorf("expected nil tokenData, got %+v", tokenData)
+	}
 }
 
 // TestRefreshTokensWithRetry_Exhausted tests failure after max retries
@@ -243,9 +299,15 @@ func TestRefreshTokensWithRetry_Exhausted(t *testing.T) {
 	defer cancel()
 
 	tokenData, err := auth.RefreshTokensWithRetry(ctx, "old_token", "old_refresh", 2)
-	assert.Error(t, err)
-	assert.Nil(t, tokenData)
-	assert.Contains(t, err.Error(), "failed after 2 attempts")
+	if err == nil {
+		t.Fatal("expected exhausted-retries error, got nil")
+	}
+	if tokenData != nil {
+		t.Errorf("expected nil tokenData, got %+v", tokenData)
+	}
+	if !strings.Contains(err.Error(), "failed after 2 attempts") {
+		t.Errorf("error %q does not contain %q", err.Error(), "failed after 2 attempts")
+	}
 }
 
 // TestRefreshTokensWithRetry_ContextCancel tests context cancellation during retry
@@ -255,8 +317,12 @@ func TestRefreshTokensWithRetry_ContextCancel(t *testing.T) {
 	cancel() // Cancel immediately
 
 	tokenData, err := auth.RefreshTokensWithRetry(ctx, "old_token", "old_refresh", 3)
-	assert.Error(t, err)
-	assert.Nil(t, tokenData)
+	if err == nil {
+		t.Error("expected context-cancelled error, got nil")
+	}
+	if tokenData != nil {
+		t.Errorf("expected nil tokenData, got %+v", tokenData)
+	}
 }
 
 // TestFetchUserInfo_Success tests successful user info fetch
@@ -266,9 +332,15 @@ func TestFetchUserInfo_Success(t *testing.T) {
 	defer cancel()
 
 	name, email, err := auth.FetchUserInfo(ctx, "test_token")
-	assert.Error(t, err)
-	assert.Empty(t, name)
-	assert.Empty(t, email)
+	if err == nil {
+		t.Error("expected error from fake token, got nil")
+	}
+	if name != "" {
+		t.Errorf("expected empty name, got %q", name)
+	}
+	if email != "" {
+		t.Errorf("expected empty email, got %q", email)
+	}
 }
 
 // TestFetchUserInfo_Failure tests user info fetch failure
@@ -278,17 +350,27 @@ func TestFetchUserInfo_Failure(t *testing.T) {
 	defer cancel()
 
 	name, email, err := auth.FetchUserInfo(ctx, "test_token")
-	assert.Error(t, err)
-	assert.Empty(t, name)
-	assert.Empty(t, email)
+	if err == nil {
+		t.Error("expected error from fake token, got nil")
+	}
+	if name != "" {
+		t.Errorf("expected empty name, got %q", name)
+	}
+	if email != "" {
+		t.Errorf("expected empty email, got %q", email)
+	}
 }
 
 // TestSaveUserInfo tests saving user info
 func TestSaveUserInfo(t *testing.T) {
 	auth := NewQoderAuth(&config.Config{})
 	name, email := auth.SaveUserInfo(context.Background(), "token", "user123", "", "")
-	assert.Equal(t, "", name)
-	assert.Equal(t, "", email)
+	if name != "" {
+		t.Errorf("expected empty name, got %q", name)
+	}
+	if email != "" {
+		t.Errorf("expected empty email, got %q", email)
+	}
 }
 
 // TestCreateTokenStorage tests creating token storage
@@ -303,13 +385,25 @@ func TestCreateTokenStorage(t *testing.T) {
 		MachineType:  "personal",
 	}
 	storage := auth.CreateTokenStorage(tokenData, "machine123")
-	require.NotNil(t, storage)
-	assert.Equal(t, "token", storage.Token)
-	assert.Equal(t, "refresh", storage.RefreshToken)
-	assert.Equal(t, "user123", storage.UserID)
-	assert.Equal(t, "machine123", storage.MachineID)
+	if storage == nil {
+		t.Fatal("CreateTokenStorage returned nil")
+	}
+	if storage.Token != "token" {
+		t.Errorf("Token = %q, want %q", storage.Token, "token")
+	}
+	if storage.RefreshToken != "refresh" {
+		t.Errorf("RefreshToken = %q, want %q", storage.RefreshToken, "refresh")
+	}
+	if storage.UserID != "user123" {
+		t.Errorf("UserID = %q, want %q", storage.UserID, "user123")
+	}
+	if storage.MachineID != "machine123" {
+		t.Errorf("MachineID = %q, want %q", storage.MachineID, "machine123")
+	}
 	// Type is set when saving to file, not in CreateTokenStorage
-	assert.Equal(t, "", storage.Type)
+	if storage.Type != "" {
+		t.Errorf("Type = %q, want empty", storage.Type)
+	}
 }
 
 // TestUpdateTokenStorage tests updating token storage
@@ -326,9 +420,15 @@ func TestUpdateTokenStorage(t *testing.T) {
 		ExpireTime:   2000,
 	}
 	auth.UpdateTokenStorage(storage, tokenData)
-	assert.Equal(t, "new_token", storage.Token)
-	assert.Equal(t, "new_refresh", storage.RefreshToken)
-	assert.Equal(t, int64(2000), storage.ExpireTime)
+	if storage.Token != "new_token" {
+		t.Errorf("Token = %q, want %q", storage.Token, "new_token")
+	}
+	if storage.RefreshToken != "new_refresh" {
+		t.Errorf("RefreshToken = %q, want %q", storage.RefreshToken, "new_refresh")
+	}
+	if storage.ExpireTime != 2000 {
+		t.Errorf("ExpireTime = %d, want %d", storage.ExpireTime, 2000)
+	}
 }
 
 // TestRefreshTokenIfNeeded_NoRefreshNeeded tests no refresh when token is valid
@@ -338,8 +438,9 @@ func TestRefreshTokenIfNeeded_NoRefreshNeeded(t *testing.T) {
 		RefreshToken: "refresh",
 		ExpireTime:   time.Now().Add(1 * time.Hour).UnixMilli(),
 	}
-	err := RefreshTokenIfNeeded(context.Background(), &config.Config{}, storage, 600, "")
-	assert.NoError(t, err)
+	if err := RefreshTokenIfNeeded(context.Background(), &config.Config{}, storage, 600, ""); err != nil {
+		t.Errorf("RefreshTokenIfNeeded returned error: %v", err)
+	}
 }
 
 // TestRefreshTokenIfNeeded_RefreshFails tests refresh failure
@@ -351,60 +452,84 @@ func TestRefreshTokenIfNeeded_RefreshFails(t *testing.T) {
 		UserID:       "user123",
 		Email:        "test@example.com",
 	}
-	err := RefreshTokenIfNeeded(context.Background(), &config.Config{}, storage, 600, "")
-	assert.Error(t, err)
+	if err := RefreshTokenIfNeeded(context.Background(), &config.Config{}, storage, 600, ""); err == nil {
+		t.Error("expected refresh error, got nil")
+	}
 }
 
 // TestIsExpired tests token expiration check
 func TestIsExpired(t *testing.T) {
 	storage := &QoderTokenStorage{}
-	assert.True(t, storage.IsExpired(0))
+	if !storage.IsExpired(0) {
+		t.Error("IsExpired(0) on zero ExpireTime should be true")
+	}
 
 	storage.ExpireTime = time.Now().Add(1 * time.Hour).UnixMilli()
-	assert.False(t, storage.IsExpired(0))
-	assert.True(t, storage.IsExpired(7200000)) // 2 hours in ms
+	if storage.IsExpired(0) {
+		t.Error("IsExpired(0) on +1h token should be false")
+	}
+	if !storage.IsExpired(7200000) { // 2 hours in ms
+		t.Error("IsExpired(2h buffer) on +1h token should be true")
+	}
 }
 
 // TestParseExpiresAt tests parsing various expire time formats
 func TestParseExpiresAt(t *testing.T) {
 	// RFC3339 format
 	rfc3339 := "2026-02-20T00:00:00Z"
-	result := parseExpiresAt(rfc3339, 0)
-	assert.Greater(t, result, int64(0))
+	if got := parseExpiresAt(rfc3339, 0); got <= 0 {
+		t.Errorf("parseExpiresAt(%q, 0) = %d, want > 0", rfc3339, got)
+	}
 
 	// Milliseconds format
 	ms := "1776902400000"
-	result = parseExpiresAt(ms, 0)
-	assert.Greater(t, result, int64(0))
+	if got := parseExpiresAt(ms, 0); got <= 0 {
+		t.Errorf("parseExpiresAt(%q, 0) = %d, want > 0", ms, got)
+	}
 
 	// Invalid format - should return default (now + 30 days)
 	invalid := "invalid"
-	result = parseExpiresAt(invalid, 0)
-	assert.Greater(t, result, time.Now().UnixMilli())
+	if got := parseExpiresAt(invalid, 0); got <= time.Now().UnixMilli() {
+		t.Errorf("parseExpiresAt(%q, 0) = %d, expected > now", invalid, got)
+	}
 }
 
 // TestGenerateDeviceCodeVerifier tests verifier generation
 func TestGenerateDeviceCodeVerifier(t *testing.T) {
 	verifier, err := generateDeviceCodeVerifier()
-	require.NoError(t, err)
-	require.NotEmpty(t, verifier)
-	assert.Len(t, verifier, 43) // base64url encoded 32 bytes
+	if err != nil {
+		t.Fatalf("generateDeviceCodeVerifier returned error: %v", err)
+	}
+	if verifier == "" {
+		t.Fatal("verifier is empty")
+	}
+	if len(verifier) != 43 { // base64url encoded 32 bytes
+		t.Errorf("len(verifier) = %d, want 43", len(verifier))
+	}
 }
 
 // TestGenerateDeviceCodeChallenge tests challenge generation
 func TestGenerateDeviceCodeChallenge(t *testing.T) {
 	verifier := "test_verifier_string_for_testing"
 	challenge := generateDeviceCodeChallenge(verifier)
-	require.NotEmpty(t, challenge)
-	assert.Len(t, challenge, 43) // base64url encoded 32 bytes
+	if challenge == "" {
+		t.Fatal("challenge is empty")
+	}
+	if len(challenge) != 43 { // base64url encoded 32 bytes
+		t.Errorf("len(challenge) = %d, want 43", len(challenge))
+	}
 }
 
 // TestGenerateMachineID tests machine ID generation
 func TestGenerateMachineID(t *testing.T) {
 	id := generateMachineID()
-	require.NotEmpty(t, id)
+	if id == "" {
+		t.Fatal("machine ID is empty")
+	}
 	// Should be a valid UUID
-	assert.Len(t, id, 36)
+	if len(id) != 36 {
+		t.Errorf("len(machineID) = %d, want 36", len(id))
+	}
 }
 
 // TestFormatExpiresAt tests expire time formatting
@@ -412,6 +537,10 @@ func TestFormatExpiresAt(t *testing.T) {
 	expireMs := int64(1776902400000)
 	result := formatExpiresAt(expireMs)
 	// The exact format depends on the local timezone, so just check it's not empty
-	assert.NotEmpty(t, result)
-	assert.Contains(t, result, "2026")
+	if result == "" {
+		t.Fatal("formatted expire time is empty")
+	}
+	if !strings.Contains(result, "2026") {
+		t.Errorf("formatted expire %q does not contain 2026", result)
+	}
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,22 +15,26 @@ import (
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // TestNewQoderExecutor tests the constructor
 func TestNewQoderExecutor(t *testing.T) {
 	cfg := &config.Config{}
 	executor := NewQoderExecutor(cfg)
-	require.NotNil(t, executor)
-	assert.Equal(t, "qoder", executor.Identifier())
+	if executor == nil {
+		t.Fatal("NewQoderExecutor returned nil")
+	}
+	if got := executor.Identifier(); got != "qoder" {
+		t.Errorf("Identifier() = %q, want %q", got, "qoder")
+	}
 }
 
 // TestIdentifier tests the identifier method
 func TestIdentifier(t *testing.T) {
 	executor := NewQoderExecutor(&config.Config{})
-	assert.Equal(t, "qoder", executor.Identifier())
+	if got := executor.Identifier(); got != "qoder" {
+		t.Errorf("Identifier() = %q, want %q", got, "qoder")
+	}
 }
 
 // TestExecuteStream_InvalidAuthStorage tests error for wrong storage type
@@ -48,9 +53,15 @@ func TestExecuteStream_InvalidAuthStorage(t *testing.T) {
 	opts := cliproxyexecutor.Options{}
 
 	result, err := executor.ExecuteStream(context.Background(), authRecord, req, opts)
-	assert.Nil(t, result)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid auth storage type")
+	if result != nil {
+		t.Errorf("expected nil result, got %+v", result)
+	}
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid auth storage type") {
+		t.Errorf("error %q does not contain %q", err.Error(), "invalid auth storage type")
+	}
 }
 
 // TestExecuteStream_TokenRefreshFailure tests handling of token refresh failure
@@ -79,8 +90,12 @@ func TestExecuteStream_TokenRefreshFailure(t *testing.T) {
 	// The request should still proceed despite refresh failure (warning logged)
 	result, err := executor.ExecuteStream(context.Background(), authRecord, req, opts)
 	// Should fail because we can't actually make the HTTP request
-	assert.Error(t, err)
-	assert.Nil(t, result)
+	if err == nil {
+		t.Error("expected error, got nil")
+	}
+	if result != nil {
+		t.Errorf("expected nil result, got %+v", result)
+	}
 }
 
 // TestExecuteStream_InvalidRequestPayload tests handling of malformed JSON
@@ -107,9 +122,15 @@ func TestExecuteStream_InvalidRequestPayload(t *testing.T) {
 	opts := cliproxyexecutor.Options{}
 
 	result, err := executor.ExecuteStream(context.Background(), authRecord, req, opts)
-	assert.Nil(t, result)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to parse request")
+	if result != nil {
+		t.Errorf("expected nil result, got %+v", result)
+	}
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to parse request") {
+		t.Errorf("error %q does not contain %q", err.Error(), "failed to parse request")
+	}
 }
 
 // TestExecuteStream_BuildAuthHeadersFailure tests auth header generation failure
@@ -144,8 +165,12 @@ func TestExecuteStream_BuildAuthHeadersFailure(t *testing.T) {
 
 	result, err := executor.ExecuteStream(context.Background(), authRecord, req, opts)
 	// Should fail because we can't build proper auth headers with test data
-	assert.Error(t, err)
-	assert.Nil(t, result)
+	if err == nil {
+		t.Error("expected error, got nil")
+	}
+	if result != nil {
+		t.Errorf("expected nil result, got %+v", result)
+	}
 }
 
 // TestExecuteStream_HTTPRequestFailure tests network error handling
@@ -173,8 +198,12 @@ func TestExecuteStream_HTTPRequestFailure(t *testing.T) {
 
 	// Use an invalid URL that will cause connection failure
 	result, err := executor.ExecuteStream(context.Background(), authRecord, req, opts)
-	assert.Error(t, err)
-	assert.Nil(t, result)
+	if err == nil {
+		t.Error("expected error, got nil")
+	}
+	if result != nil {
+		t.Errorf("expected nil result, got %+v", result)
+	}
 }
 
 // TestExecuteStream_NonOKResponse verifies ExecuteStream surfaces a clear
@@ -209,9 +238,15 @@ func TestExecuteStream_NonOKResponse(t *testing.T) {
 	opts := cliproxyexecutor.Options{}
 
 	result, err := executor.ExecuteStream(context.Background(), authRecord, req, opts)
-	assert.Nil(t, result)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "model config cache is empty")
+	if result != nil {
+		t.Errorf("expected nil result, got %+v", result)
+	}
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "model config cache is empty") {
+		t.Errorf("error %q does not contain %q", err.Error(), "model config cache is empty")
+	}
 }
 
 // TestExecuteStream_StreamParsing tests successful stream parsing
@@ -248,22 +283,34 @@ func TestBuildOpenAIChunk(t *testing.T) {
 	}
 
 	chunkBytes, err := buildOpenAIChunk(inner, "gpt-4")
-	require.NoError(t, err)
-	require.NotNil(t, chunkBytes)
+	if err != nil {
+		t.Fatalf("buildOpenAIChunk returned error: %v", err)
+	}
+	if chunkBytes == nil {
+		t.Fatal("buildOpenAIChunk returned nil bytes")
+	}
 
 	var result map[string]interface{}
-	err = json.Unmarshal(chunkBytes, &result)
-	require.NoError(t, err)
-	assert.Equal(t, "gpt-4", result["model"])
+	if err = json.Unmarshal(chunkBytes, &result); err != nil {
+		t.Fatalf("failed to unmarshal chunk: %v", err)
+	}
+	if got := result["model"]; got != "gpt-4" {
+		t.Errorf("model = %v, want %q", got, "gpt-4")
+	}
 }
-
 
 // TestNewQoderStatusError tests error creation
 func TestNewQoderStatusError(t *testing.T) {
 	err := newQoderStatusError(500, "test error")
-	require.NotNil(t, err)
-	assert.Contains(t, err.Error(), "500")
-	assert.Contains(t, err.Error(), "test error")
+	if err == nil {
+		t.Fatal("newQoderStatusError returned nil")
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Errorf("error %q does not contain %q", err.Error(), "500")
+	}
+	if !strings.Contains(err.Error(), "test error") {
+		t.Errorf("error %q does not contain %q", err.Error(), "test error")
+	}
 }
 
 // TestExecuteStream_ModelMapping tests model name mapping
@@ -295,8 +342,9 @@ func TestExecuteStream_ModelMapping(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	_, err := executor.ExecuteStream(ctx, authRecord, req, opts)
-	assert.Error(t, err)
+	if _, err := executor.ExecuteStream(ctx, authRecord, req, opts); err == nil {
+		t.Error("expected error, got nil")
+	}
 }
 
 // TestExecute_InvalidAuth tests that Execute returns an error when the auth
@@ -313,9 +361,15 @@ func TestExecute_InvalidAuth(t *testing.T) {
 	opts := cliproxyexecutor.Options{}
 
 	resp, err := executor.Execute(context.Background(), authRecord, req, opts)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid auth storage type")
-	assert.Empty(t, resp.Payload)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid auth storage type") {
+		t.Errorf("error %q does not contain %q", err.Error(), "invalid auth storage type")
+	}
+	if len(resp.Payload) != 0 {
+		t.Errorf("expected empty payload, got %d bytes", len(resp.Payload))
+	}
 }
 
 // TestExecute_TranslateNonStream_SameFormatIsPassthrough validates that when
@@ -340,7 +394,9 @@ func TestExecute_TranslateNonStream_SameFormatIsPassthrough(t *testing.T) {
 		},
 	}
 	responseBytes, err := json.Marshal(openAIResp)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("marshal openAIResp: %v", err)
+	}
 
 	// When both from and to are FormatOpenAI, TranslateNonStream
 	// falls back to returning rawJSON unchanged (no translator registered).
@@ -356,12 +412,23 @@ func TestExecute_TranslateNonStream_SameFormatIsPassthrough(t *testing.T) {
 	)
 
 	var result map[string]interface{}
-	require.NoError(t, json.Unmarshal(out, &result))
-	assert.Equal(t, "chat.completion", result["object"])
-	choices := result["choices"].([]interface{})
-	require.Len(t, choices, 1)
+	if err = json.Unmarshal(out, &result); err != nil {
+		t.Fatalf("unmarshal translated response: %v", err)
+	}
+	if got := result["object"]; got != "chat.completion" {
+		t.Errorf("object = %v, want %q", got, "chat.completion")
+	}
+	choices, ok := result["choices"].([]interface{})
+	if !ok {
+		t.Fatalf("choices is not []interface{}: %T", result["choices"])
+	}
+	if len(choices) != 1 {
+		t.Fatalf("len(choices) = %d, want 1", len(choices))
+	}
 	msg := choices[0].(map[string]interface{})["message"].(map[string]interface{})
-	assert.Equal(t, "Hello from Qoder", msg["content"])
+	if got := msg["content"]; got != "Hello from Qoder" {
+		t.Errorf("message.content = %v, want %q", got, "Hello from Qoder")
+	}
 }
 
 // TestExecute_TranslateNonStream_EmptySourceFormatIsPassthrough validates
@@ -399,8 +466,12 @@ func TestExecute_TranslateNonStream_EmptySourceFormatIsPassthrough(t *testing.T)
 	)
 
 	var result map[string]interface{}
-	require.NoError(t, json.Unmarshal(out, &result))
-	assert.Equal(t, "chat.completion", result["object"])
+	if err := json.Unmarshal(out, &result); err != nil {
+		t.Fatalf("unmarshal translated response: %v", err)
+	}
+	if got := result["object"]; got != "chat.completion" {
+		t.Errorf("object = %v, want %q", got, "chat.completion")
+	}
 }
 
 // TestExecute_TranslateNonStream_NonOpenAISourceFormat validates that when
@@ -443,8 +514,12 @@ func TestExecute_TranslateNonStream_NonOpenAISourceFormat(t *testing.T) {
 		&param,
 	)
 
-	assert.NotEmpty(t, out)
-	assert.True(t, json.Valid(out), "TranslateNonStream must return valid JSON")
+	if len(out) == 0 {
+		t.Error("expected non-empty translated output")
+	}
+	if !json.Valid(out) {
+		t.Error("TranslateNonStream must return valid JSON")
+	}
 }
 
 // TestExecute_ResponseStructureMatchesOpenAISchema validates that the
@@ -474,31 +549,59 @@ func TestExecute_ResponseStructureMatchesOpenAISchema(t *testing.T) {
 	}
 
 	responseBytes, err := json.Marshal(response)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("marshal response: %v", err)
+	}
 
 	var result map[string]interface{}
-	require.NoError(t, json.Unmarshal(responseBytes, &result))
+	if err = json.Unmarshal(responseBytes, &result); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
 
 	// Verify top-level fields match OpenAI schema.
-	assert.Equal(t, "chat.completion", result["object"])
-	assert.Equal(t, model, result["model"])
-	assert.NotEmpty(t, result["id"])
-	assert.NotZero(t, result["created"])
+	if got := result["object"]; got != "chat.completion" {
+		t.Errorf("object = %v, want %q", got, "chat.completion")
+	}
+	if got := result["model"]; got != model {
+		t.Errorf("model = %v, want %q", got, model)
+	}
+	if id, _ := result["id"].(string); id == "" {
+		t.Error("id is empty")
+	}
+	if created, _ := result["created"].(float64); created == 0 {
+		t.Error("created is zero")
+	}
 
 	// Verify choices array.
 	choices, ok := result["choices"].([]interface{})
-	require.True(t, ok, "choices must be an array")
-	require.Len(t, choices, 1)
+	if !ok {
+		t.Fatalf("choices is not []interface{}: %T", result["choices"])
+	}
+	if len(choices) != 1 {
+		t.Fatalf("len(choices) = %d, want 1", len(choices))
+	}
 
 	choice, ok := choices[0].(map[string]interface{})
-	require.True(t, ok)
-	assert.Equal(t, float64(0), choice["index"])
-	assert.Equal(t, finishReason, choice["finish_reason"])
+	if !ok {
+		t.Fatalf("choice is not map[string]interface{}: %T", choices[0])
+	}
+	if got := choice["index"]; got != float64(0) {
+		t.Errorf("choice.index = %v, want 0", got)
+	}
+	if got := choice["finish_reason"]; got != finishReason {
+		t.Errorf("choice.finish_reason = %v, want %q", got, finishReason)
+	}
 
 	msg, ok := choice["message"].(map[string]interface{})
-	require.True(t, ok)
-	assert.Equal(t, "assistant", msg["role"])
-	assert.Equal(t, content, msg["content"])
+	if !ok {
+		t.Fatalf("message is not map[string]interface{}: %T", choice["message"])
+	}
+	if got := msg["role"]; got != "assistant" {
+		t.Errorf("message.role = %v, want %q", got, "assistant")
+	}
+	if got := msg["content"]; got != content {
+		t.Errorf("message.content = %v, want %q", got, content)
+	}
 }
 
 // TestExecute_TranslateNonStream_UsesRequestPayload verifies that when
@@ -530,7 +633,9 @@ func TestExecute_TranslateNonStream_UsesTranslatedRequestPayload(t *testing.T) {
 			"auto", reqPayload, false,
 		)
 	}
-	require.NotNil(t, translatedPayload)
+	if translatedPayload == nil {
+		t.Fatal("translated payload is nil")
+	}
 
 	// Now call TranslateNonStream with the translated request payload.
 	var param any
@@ -545,6 +650,10 @@ func TestExecute_TranslateNonStream_UsesTranslatedRequestPayload(t *testing.T) {
 		&param,
 	)
 
-	assert.NotEmpty(t, out)
-	assert.True(t, json.Valid(out))
+	if len(out) == 0 {
+		t.Error("expected non-empty translated output")
+	}
+	if !json.Valid(out) {
+		t.Error("TranslateNonStream must return valid JSON")
+	}
 }
