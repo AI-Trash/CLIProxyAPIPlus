@@ -192,6 +192,23 @@ func (e *QoderExecutor) ExecuteStream(ctx context.Context, authRecord *cliproxya
 	if httpResp.StatusCode != http.StatusOK {
 		defer func() { _ = httpResp.Body.Close() }()
 		body, _ := io.ReadAll(httpResp.Body)
+		// Log enough to identify the upstream rejecter (405 from a CDN /
+		// gateway looks identical to 405 from the API itself in error text).
+		// We log only response metadata + the first 500 bytes of the body —
+		// no request body, no auth headers — so it is safe to leave on at
+		// debug level. Triggered by the intermittent 405s seen on
+		// /algo/api/v3/conversation/chat after auth file watcher activity.
+		log.WithFields(log.Fields{
+			"status":         httpResp.StatusCode,
+			"url":            qoderauth.QoderChatURL,
+			"server":         httpResp.Header.Get("Server"),
+			"content_type":   httpResp.Header.Get("Content-Type"),
+			"x_request_id":   httpResp.Header.Get("X-Request-Id"),
+			"x_eagleeye_id":  httpResp.Header.Get("Eagleeye-Traceid"),
+			"x_oss_request":  httpResp.Header.Get("X-Oss-Request-Id"),
+			"allow":          httpResp.Header.Get("Allow"),
+			"body_truncated": truncate(string(body), 500),
+		}).Debug("qoder: upstream non-200")
 		return nil, newQoderStatusError(httpResp.StatusCode, string(body))
 	}
 
