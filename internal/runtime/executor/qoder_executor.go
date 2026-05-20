@@ -84,7 +84,7 @@ func (e *QoderExecutor) ExecuteStream(ctx context.Context, authRecord *cliproxya
 	// the canonical OpenAI structure and emits real tool_use events.
 	messagesRaw, _ := chatReq["messages"].([]interface{})
 	toolsRaw := chatReq["tools"]
-	normalized := normalizeQoderMessages(messagesRaw)
+	normalized, systemText := normalizeQoderMessages(messagesRaw)
 
 	// Resolve the per-model server-side metadata (is_vl, is_reasoning,
 	// max_input_tokens, ...). Failing here is a hard error — sending the
@@ -107,9 +107,21 @@ func (e *QoderExecutor) ExecuteStream(ctx context.Context, authRecord *cliproxya
 	sessionID := stableHash("qoder-session", storage.UserID, qoderModel)
 	recordID := stableChatRecordID(qoderModel, normalized, toolsRaw, int(maxOutputTokens))
 
+	// Start with the model's maximum output tokens, then clamp to
+	// any user-requested limit so callers can cap cost/latency/UI.
 	maxTokens := 32768
 	if maxOutputTokens > 0 {
 		maxTokens = int(maxOutputTokens)
+	}
+	if userMax, ok := chatReq["max_tokens"].(float64); ok && userMax > 0 {
+		if int(userMax) < maxTokens {
+			maxTokens = int(userMax)
+		}
+	}
+	if userMax, ok := chatReq["max_completion_tokens"].(float64); ok && userMax > 0 {
+		if int(userMax) < maxTokens {
+			maxTokens = int(userMax)
+		}
 	}
 
 	reqBody := map[string]interface{}{
@@ -130,7 +142,7 @@ func (e *QoderExecutor) ExecuteStream(ctx context.Context, authRecord *cliproxya
 		"chat_prompt":      "",
 		"image_urls":       nil,
 		"aliyun_user_type": "",
-		"system":           "",
+		"system":           systemText,
 		"messages":         normalized,
 		"tools":            []interface{}{},
 		"parameters":       map[string]interface{}{"max_tokens": maxTokens},
@@ -391,6 +403,9 @@ func extractContentGeneric(content interface{}) string {
 		}
 		return strings.Join(parts, "\n")
 	default:
+		if content == nil {
+			return ""
+		}
 		return fmt.Sprintf("%v", content)
 	}
 }
@@ -401,20 +416,27 @@ func extractContentGeneric(content interface{}) string {
 //  1. Flatten content: Anthropic/OpenAI multipart content arrays
 //     ([{type:"text",text:"..."}]) are collapsed to plain strings.
 //
-//  2. Drop system messages: Qoder rejects role="system"; they are silently
-//     removed.
-func normalizeQoderMessages(messages []interface{}) []interface{} {
+//  2. Remap system messages: Qoder rejects role="system" in the messages
+//     array; system prompt content is collected and returned separately
+//     so the caller can place it in the top-level "system" request field.
+func normalizeQoderMessages(messages []interface{}) (normalized []interface{}, systemText string) {
 	if len(messages) == 0 {
-		return nil
+		return nil, ""
 	}
 	out := make([]interface{}, 0, len(messages))
+	var systemParts []string
 	for _, msg := range messages {
 		msgMap, ok := msg.(map[string]interface{})
 		if !ok {
 			continue
 		}
-		// Drop system messages — Qoder does not accept role="system".
+		// Collect system messages — Qoder does not accept role="system"
+		// in the messages array, so we remap them to the top-level
+		// "system" request field.
 		if role, _ := msgMap["role"].(string); role == "system" {
+			if text := extractContentGeneric(msgMap["content"]); text != "" {
+				systemParts = append(systemParts, text)
+			}
 			continue
 		}
 		cloned := make(map[string]interface{}, len(msgMap))
@@ -424,7 +446,7 @@ func normalizeQoderMessages(messages []interface{}) []interface{} {
 		cloned["content"] = extractContentGeneric(msgMap["content"])
 		out = append(out, cloned)
 	}
-	return out
+	return out, strings.Join(systemParts, "\n\n")
 }
 
 func buildOpenAIChunk(inner map[string]interface{}, model string) ([]byte, error) {
