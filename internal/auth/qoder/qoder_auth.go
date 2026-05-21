@@ -312,6 +312,10 @@ func (qa *QoderAuth) RefreshTokens(ctx context.Context, accessToken, refreshToke
 		return nil, fmt.Errorf("failed to parse refresh response: %w", err)
 	}
 
+	if response.Token == "" {
+		return nil, fmt.Errorf("token refresh returned empty access token; raw response keys may have changed")
+	}
+
 	expireMs := parseExpiresAt(response.ExpiresAt, response.ExpiresIn)
 
 	return &QoderTokenData{
