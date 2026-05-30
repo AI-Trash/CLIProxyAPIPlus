@@ -542,7 +542,6 @@ func (h *Handler) buildAuthFileEntry(auth *coreauth.Auth) gin.H {
 	if websockets, ok := authWebsocketsValue(auth); ok {
 		entry["websockets"] = websockets
 	}
-	}
 	return entry
 }
 
