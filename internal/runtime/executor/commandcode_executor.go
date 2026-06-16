@@ -397,18 +397,17 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 	model := req.Model
 
 	// Use the proxy's built-in translator to convert from source format to
-	// OpenAI format — this properly resolves content nesting and strips
-	// system messages automatically.
+	// OpenAI format — this properly resolves content nesting.
 	from := opts.SourceFormat
 	to := sdktranslator.FromString("openai")
 	translated := sdktranslator.TranslateRequest(from, to, model, payload, stream)
 
-	messages := gjson.GetBytes(translated, "messages").Raw
+	// Command-code expects: content as array-of-blocks, system in params.system
+	messages, sysPrompt := convertMessagesForCC(translated)
 	if messages == "" || messages == "[]" {
-		// Fallback: raw "input" field
 		if input := gjson.GetBytes(payload, "input"); input.Exists() {
 			if input.Type == gjson.String {
-				messages = fmt.Sprintf(`[{"role":"user","content":%s}]`, ccEncode(input.String()))
+				messages = fmt.Sprintf(`[{"role":"user","content":[{"type":"text","text":%s}]}]`, ccEncode(input.String()))
 			} else if input.IsArray() {
 				messages = fmt.Sprintf(`[{"role":"user","content":%s}]`, input.Raw)
 			}
@@ -431,9 +430,12 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 		temperature = 0.3
 	}
 
-	system := gjson.GetBytes(translated, "system").String()
-	if system == "" {
-		system = gjson.GetBytes(payload, "instructions").String()
+	// System prompt from translation takes priority; fall back to instructions
+	if sysPrompt == "" {
+		sysPrompt = gjson.GetBytes(translated, "system").String()
+	}
+	if sysPrompt == "" {
+		sysPrompt = gjson.GetBytes(payload, "instructions").String()
 	}
 
 	params := fmt.Sprintf(`"model":%s,"messages":%s,"max_tokens":%d,"temperature":%f,"stream":%v`,
@@ -443,8 +445,8 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 		`{"params":{%s},"mode":"tool-desc","config":{"environment":"production","workingDir":"/workspace","date":"%s","structure":[],"isGitRepo":false,"currentBranch":"","mainBranch":"","gitStatus":"","recentCommits":[]},"memory":"","taste":"","skills":""}`,
 		params, time.Now().UTC().Format("2006-01-02"))
 
-	if system != "" {
-		body, _ = sjson.Set(body, "params.system", system)
+	if sysPrompt != "" {
+		body, _ = sjson.Set(body, "params.system", sysPrompt)
 	}
 
 	if cfg := gjson.GetBytes(translated, "reasoning_effort"); cfg.Exists() {
@@ -462,6 +464,55 @@ func summary(s []byte, n int) string {
 		return string(s)
 	}
 	return string(s[:n]) + "..."
+}
+
+// convertMessagesForCC converts OpenAI-format messages to command-code format:
+// - Filters system messages (returns them separately as the second return value)
+// - Converts string content to array-of-blocks format
+func convertMessagesForCC(translated []byte) (messages, system string) {
+	msgs := gjson.GetBytes(translated, "messages")
+	if !msgs.Exists() {
+		return "[]", ""
+	}
+
+	var converted []json.RawMessage
+	for _, msg := range msgs.Array() {
+		role := msg.Get("role").String()
+		if role == "" {
+			continue
+		}
+		if role == "system" {
+			if content := msg.Get("content"); content.Exists() {
+				system = content.String()
+			}
+			continue
+		}
+		content := msg.Get("content")
+		var contentJSON string
+		if content.Type == gjson.String {
+			contentJSON = fmt.Sprintf(`[{"type":"text","text":%s}]`, ccEncode(content.String()))
+		} else {
+			contentJSON = content.Raw
+		}
+		converted = append(converted, json.RawMessage(
+			fmt.Sprintf(`{"role":%s,"content":%s}`, ccEncode(role), contentJSON),
+		))
+	}
+
+	if len(converted) == 0 {
+		return "[]", system
+	}
+
+	var sb strings.Builder
+	sb.WriteByte('[')
+	for i, m := range converted {
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		sb.Write(m)
+	}
+	sb.WriteByte(']')
+	return sb.String(), system
 }
 
 func (e *CommandCodeExecutor) convertNonStreamToOpenAI(body []byte) ([]byte, usage.Detail) {
