@@ -219,19 +219,21 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 		scanner := bufio.NewScanner(httpResp.Body)
 		scanner.Buffer(nil, 52_428_800)
 
-		isResponses := opts.SourceFormat.String() == "openai-response"
-		log.Infof("[commandcode] ExecuteStream start model=%s sourceFormat=%s isResponses=%v", req.Model, opts.SourceFormat, isResponses)
+		to := sdktranslator.FromString("openai")
+		from := opts.SourceFormat
+		var param any
 
 		var (
 			finished         bool
 			usageSent        bool
 			accText          strings.Builder
-			responsesInit    bool
 			promptTokens     int64
 			completionTokens int64
 			chunkCount       int
 			textChunkCount   int
 		)
+
+		log.Infof("[commandcode] ExecuteStream start model=%s sourceFormat=%s", req.Model, opts.SourceFormat)
 
 		for scanner.Scan() {
 			chunkCount++
@@ -256,24 +258,15 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 				}
 				accText.WriteString(text)
 
-				if isResponses {
-					if !responsesInit {
-						responsesInit = true
-						log.Info("[commandcode] emitting Codex response init events (response.created, in_progress, output_item.added, content_part.added)")
-						out <- cliproxyexecutor.StreamChunk{Payload: responsesCreated()}
-						out <- cliproxyexecutor.StreamChunk{Payload: responsesInProgress()}
-						out <- cliproxyexecutor.StreamChunk{Payload: responsesOutputItemAdded()}
-						out <- cliproxyexecutor.StreamChunk{Payload: responsesContentPartAdded()}
-					}
-					out <- cliproxyexecutor.StreamChunk{Payload: responsesTextDelta(text)}
-				} else {
-					out <- cliproxyexecutor.StreamChunk{Payload: buildCCChunk(text)}
+				// Build OpenAI SSE chunk, then translate to source format
+				chunk := buildCCChunk(text)
+				chunks := sdktranslator.TranslateStream(ctx, to, from, req.Model, opts.OriginalRequest, nil, chunk, &param)
+				for _, c := range chunks {
+					out <- cliproxyexecutor.StreamChunk{Payload: c}
 				}
 
 			case chunkType == "finish":
 				finished = true
-				log.Infof("[commandcode] finish event received: isResponses=%v promptTokens=%d completionTokens=%d",
-					isResponses, promptTokens, completionTokens)
 				usageNode := gjson.GetBytes(line, "totalUsage")
 				if usageNode.Exists() && !usageSent {
 					usageSent = true
@@ -292,17 +285,10 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 					}
 					reporter.publish(ctx, detail)
 				}
-
-				if isResponses {
-					fullText := accText.String()
-					log.Infof("[commandcode] emitting Codex completion events: textDone, contentPartDone, outputItemDone, completed (textLen=%d)", len(fullText))
-					out <- cliproxyexecutor.StreamChunk{Payload: responsesTextDone(fullText)}
-					out <- cliproxyexecutor.StreamChunk{Payload: responsesContentPartDone(fullText)}
-					out <- cliproxyexecutor.StreamChunk{Payload: responsesOutputItemDone(fullText)}
-					out <- cliproxyexecutor.StreamChunk{Payload: responsesCompleted(promptTokens, completionTokens)}
-					log.Infof("[commandcode] response.completed emitted with promptTokens=%d completionTokens=%d", promptTokens, completionTokens)
-				} else {
-					out <- cliproxyexecutor.StreamChunk{Payload: buildCCFinishChunk(promptTokens, completionTokens)}
+				chunk := buildCCFinishChunk(promptTokens, completionTokens)
+				chunks := sdktranslator.TranslateStream(ctx, to, from, req.Model, opts.OriginalRequest, nil, chunk, &param)
+				for _, c := range chunks {
+					out <- cliproxyexecutor.StreamChunk{Payload: c}
 				}
 
 			case chunkType == "error":
@@ -323,7 +309,7 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 				return
 
 			default:
-				// reasoning-start/delta/end, tool-call, tool-result — skip
+				// reasoning/tool events — skip
 			}
 		}
 
@@ -333,16 +319,11 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 			reporter.publishFailure(ctx)
 			out <- cliproxyexecutor.StreamChunk{Err: errScan}
 		} else if !finished {
-			log.Warnf("[commandcode] stream ended without finish event: chunkCount=%d textChunkCount=%d isResponses=%v",
-				chunkCount, textChunkCount, isResponses)
-			if isResponses {
-				out <- cliproxyexecutor.StreamChunk{Payload: responsesCompleted(0, 0)}
-			} else {
-				out <- cliproxyexecutor.StreamChunk{Payload: []byte("data: [DONE]\n\n")}
-			}
+			log.Warnf("[commandcode] stream ended without finish event: chunkCount=%d", chunkCount)
+			out <- cliproxyexecutor.StreamChunk{Payload: []byte("data: [DONE]\n\n")}
 		} else {
-			log.Infof("[commandcode] stream completed: chunkCount=%d textChunkCount=%d textLen=%d isResponses=%v promptTokens=%d completionTokens=%d",
-				chunkCount, textChunkCount, accText.Len(), isResponses, promptTokens, completionTokens)
+			log.Infof("[commandcode] stream completed: chunkCount=%d textChunkCount=%d textLen=%d promptTokens=%d completionTokens=%d",
+				chunkCount, textChunkCount, accText.Len(), promptTokens, completionTokens)
 		}
 		reporter.ensurePublished(ctx)
 	}()
@@ -414,24 +395,22 @@ func (e *CommandCodeExecutor) buildHTTPRequest(ctx context.Context, baseURL, end
 func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opts cliproxyexecutor.Options, stream bool) []byte {
 	payload := req.Payload
 	model := req.Model
-	isResponseFormat := opts.SourceFormat.String() == "openai-response"
 
-	// For /v1/responses, proxy already converted input→messages. Use raw.
-	// For /v1/chat/completions, normalise (filter system, keep content raw).
-	var messages string
-	if isResponseFormat {
-		messages = gjson.GetBytes(payload, "messages").Raw
-	} else {
-		messages = normalizeCCMessages(payload)
-	}
+	// Use the proxy's built-in translator to convert from source format to
+	// OpenAI format — this properly resolves content nesting and strips
+	// system messages automatically.
+	from := opts.SourceFormat
+	to := sdktranslator.FromString("openai")
+	translated := sdktranslator.TranslateRequest(from, to, model, payload, stream)
+
+	messages := gjson.GetBytes(translated, "messages").Raw
 	if messages == "" || messages == "[]" {
+		// Fallback: raw "input" field
 		if input := gjson.GetBytes(payload, "input"); input.Exists() {
 			if input.Type == gjson.String {
 				messages = fmt.Sprintf(`[{"role":"user","content":%s}]`, ccEncode(input.String()))
 			} else if input.IsArray() {
 				messages = fmt.Sprintf(`[{"role":"user","content":%s}]`, input.Raw)
-			} else {
-				messages = fmt.Sprintf(`[{"role":"user","content":%s}]`, ccEncode(input.Raw))
 			}
 		}
 	}
@@ -439,17 +418,22 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 		messages = "[]"
 	}
 
-	maxTokens := gjson.GetBytes(payload, "max_tokens").Int()
+	maxTokens := gjson.GetBytes(translated, "max_tokens").Int()
 	if maxTokens == 0 {
-		maxTokens = gjson.GetBytes(payload, "max_completion_tokens").Int()
+		maxTokens = gjson.GetBytes(translated, "max_completion_tokens").Int()
 	}
 	if maxTokens == 0 {
 		maxTokens = 64000
 	}
 
-	temperature := gjson.GetBytes(payload, "temperature").Float()
+	temperature := gjson.GetBytes(translated, "temperature").Float()
 	if temperature == 0 {
 		temperature = 0.3
+	}
+
+	system := gjson.GetBytes(translated, "system").String()
+	if system == "" {
+		system = gjson.GetBytes(payload, "instructions").String()
 	}
 
 	params := fmt.Sprintf(`"model":%s,"messages":%s,"max_tokens":%d,"temperature":%f,"stream":%v`,
@@ -459,11 +443,11 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 		`{"params":{%s},"mode":"tool-desc","config":{"environment":"production","workingDir":"/workspace","date":"%s","structure":[],"isGitRepo":false,"currentBranch":"","mainBranch":"","gitStatus":"","recentCommits":[]},"memory":"","taste":"","skills":""}`,
 		params, time.Now().UTC().Format("2006-01-02"))
 
-	if system := extractSystemFromMessages(payload); system != "" {
+	if system != "" {
 		body, _ = sjson.Set(body, "params.system", system)
 	}
 
-	if cfg := gjson.GetBytes(payload, "reasoning_effort"); cfg.Exists() {
+	if cfg := gjson.GetBytes(translated, "reasoning_effort"); cfg.Exists() {
 		body, _ = sjson.Set(body, "params.reasoning_effort", cfg.Value())
 	}
 
@@ -478,65 +462,6 @@ func summary(s []byte, n int) string {
 		return string(s)
 	}
 	return string(s[:n]) + "..."
-}
-
-// normalizeCCMessages converts messages to command-code's expected format.
-// - Filters out system messages (sent via params.system instead).
-// - Keeps string content as-is; the API accepts both string and array-of-blocks.
-func normalizeCCMessages(payload []byte) string {
-	msgs := gjson.GetBytes(payload, "messages")
-	if !msgs.Exists() {
-		return "[]"
-	}
-
-	converted := make([]json.RawMessage, 0, len(msgs.Array()))
-	for _, msg := range msgs.Array() {
-		role := msg.Get("role").String()
-		if role == "system" {
-			continue
-		}
-		content := msg.Get("content")
-		// Keep content as-is: both string and array-of-blocks are accepted
-		converted = append(converted, json.RawMessage(
-			fmt.Sprintf(`{"role":%s,"content":%s}`, ccEncode(role), content.Raw),
-		))
-	}
-
-	if len(converted) == 0 {
-		return "[]"
-	}
-
-	var sb strings.Builder
-	sb.WriteByte('[')
-	for i, m := range converted {
-		if i > 0 {
-			sb.WriteByte(',')
-		}
-		sb.Write(m)
-	}
-	sb.WriteByte(']')
-	return sb.String()
-}
-
-func extractSystemFromMessages(payload []byte) string {
-	// Check Codex response format: "instructions" field
-	if inst := gjson.GetBytes(payload, "instructions"); inst.Exists() && inst.String() != "" {
-		return inst.String()
-	}
-	for _, msg := range gjson.GetBytes(payload, "messages").Array() {
-		if msg.Get("role").String() == "system" {
-			content := msg.Get("content")
-			if content.IsArray() {
-				for _, part := range content.Array() {
-					if part.Get("type").String() == "text" {
-						return part.Get("text").String()
-					}
-				}
-			}
-			return content.String()
-		}
-	}
-	return ""
 }
 
 func (e *CommandCodeExecutor) convertNonStreamToOpenAI(body []byte) ([]byte, usage.Detail) {
@@ -583,51 +508,6 @@ func (e *CommandCodeExecutor) convertNonStreamToOpenAI(body []byte) ([]byte, usa
 		detail.TotalTokens = detail.InputTokens + detail.OutputTokens
 	}
 	return []byte(openAIResp), detail
-}
-
-// ── Helpers: Codex response format (for /v1/responses endpoint) ─────────
-// The proxy's ConvertCodexResponseToOpenAI consumes these events and
-// converts them to OpenAI SSE for the client.
-
-func responsesCreated() []byte {
-	return []byte(`data: {"type":"response.created","response":{"id":"chatcmpl-cc","object":"response","created_at":0,"status":"in_progress","background":false,"error":null,"output":[]}}` + "\n\n")
-}
-
-func responsesInProgress() []byte {
-	return []byte(`data: {"type":"response.in_progress","response":{"id":"chatcmpl-cc","object":"response","created_at":0,"status":"in_progress"}}` + "\n\n")
-}
-
-func responsesOutputItemAdded() []byte {
-	return []byte(`data: {"type":"response.output_item.added","output_index":0,"item":{"id":"msg_chatcmpl-cc_0","type":"message","status":"in_progress","content":[],"role":"assistant"}}` + "\n\n")
-}
-
-func responsesContentPartAdded() []byte {
-	return []byte(`data: {"type":"response.content_part.added","item_id":"msg_chatcmpl-cc_0","output_index":0,"content_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""}}` + "\n\n")
-}
-
-func responsesTextDelta(text string) []byte {
-	return []byte(fmt.Sprintf(`data: {"type":"response.output_text.delta","item_id":"msg_chatcmpl-cc_0","output_index":0,"content_index":0,"delta":%s,"logprobs":[]}%s`,
-		ccEncode(text), "\n\n"))
-}
-
-func responsesTextDone(text string) []byte {
-	return []byte(fmt.Sprintf(`data: {"type":"response.output_text.done","item_id":"msg_chatcmpl-cc_0","output_index":0,"content_index":0,"text":%s,"logprobs":[]}%s`,
-		ccEncode(text), "\n\n"))
-}
-
-func responsesContentPartDone(text string) []byte {
-	return []byte(fmt.Sprintf(`data: {"type":"response.content_part.done","item_id":"msg_chatcmpl-cc_0","output_index":0,"content_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":%s}}%s`,
-		ccEncode(text), "\n\n"))
-}
-
-func responsesOutputItemDone(text string) []byte {
-	return []byte(fmt.Sprintf(`data: {"type":"response.output_item.done","output_index":0,"item":{"id":"msg_chatcmpl-cc_0","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":%s}],"role":"assistant"}}%s`,
-		ccEncode(text), "\n\n"))
-}
-
-func responsesCompleted(promptTokens, completionTokens int64) []byte {
-	return []byte(fmt.Sprintf(`data: {"type":"response.completed","response":{"id":"chatcmpl-cc","object":"response","created_at":0,"status":"completed","model":"commandcode","output":[],"usage":{"input_tokens":%d,"output_tokens":%d,"total_tokens":%d}}}%s`,
-		promptTokens, completionTokens, promptTokens+completionTokens, "\n\n"))
 }
 
 func ccEncode(v string) string {
