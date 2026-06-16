@@ -414,11 +414,17 @@ func (e *CommandCodeExecutor) buildHTTPRequest(ctx context.Context, baseURL, end
 func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opts cliproxyexecutor.Options, stream bool) []byte {
 	payload := req.Payload
 	model := req.Model
+	isResponseFormat := opts.SourceFormat.String() == "openai-response"
 
-	// Handle Codex responses format: "input" field instead of "messages"
-	messages := normalizeCCMessages(payload)
+	// For /v1/responses, proxy already converted input→messages. Use raw.
+	// For /v1/chat/completions, normalise (filter system, keep content raw).
+	var messages string
+	if isResponseFormat {
+		messages = gjson.GetBytes(payload, "messages").Raw
+	} else {
+		messages = normalizeCCMessages(payload)
+	}
 	if messages == "" || messages == "[]" {
-		// Check for Codex response format: {"input": "text"} or {"input": [...]}
 		if input := gjson.GetBytes(payload, "input"); input.Exists() {
 			if input.Type == gjson.String {
 				messages = fmt.Sprintf(`[{"role":"user","content":%s}]`, ccEncode(input.String()))
@@ -446,16 +452,13 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 		temperature = 0.3
 	}
 
-	// Build params object
 	params := fmt.Sprintf(`"model":%s,"messages":%s,"max_tokens":%d,"temperature":%f,"stream":%v`,
 		ccEncode(model), messages, maxTokens, temperature, stream)
 
-	// command-code requires a full config block
 	body := fmt.Sprintf(
 		`{"params":{%s},"mode":"tool-desc","config":{"environment":"production","workingDir":"/workspace","date":"%s","structure":[],"isGitRepo":false,"currentBranch":"","mainBranch":"","gitStatus":"","recentCommits":[]},"memory":"","taste":"","skills":""}`,
 		params, time.Now().UTC().Format("2006-01-02"))
 
-	// Add system prompt if present
 	if system := extractSystemFromMessages(payload); system != "" {
 		body, _ = sjson.Set(body, "params.system", system)
 	}
@@ -466,6 +469,7 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 
 	log.Infof("[commandcode] built request body: targetModel=%s srcFormat=%s bodyPreview=%s",
 		req.Model, opts.SourceFormat, summary([]byte(body), 400))
+
 	return []byte(body)
 }
 
