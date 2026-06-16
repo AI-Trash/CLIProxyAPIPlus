@@ -157,6 +157,8 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 		models = applyExcludedModels(registry.GetCodeBuddyModels(), excluded)
 	case "qoder":
 		models = applyExcludedModels(executor.FetchQoderModels(ctx, a, s.cfg), excluded)
+	case "commandcode":
+		models = applyExcludedModels(registry.GetCommandCodeModels(), excluded)
 	case "xai":
 		models = registry.GetXAIModels()
 		if entry := s.resolveConfigXAIKey(a); entry != nil {
