@@ -421,12 +421,11 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 		// Check for Codex response format: {"input": "text"} or {"input": [...]}
 		if input := gjson.GetBytes(payload, "input"); input.Exists() {
 			if input.Type == gjson.String {
-				messages = fmt.Sprintf(`[{"role":"user","content":[{"type":"text","text":%s}]}]`, ccEncode(input.String()))
+				messages = fmt.Sprintf(`[{"role":"user","content":%s}]`, ccEncode(input.String()))
 			} else if input.IsArray() {
-				// input is already a content blocks array
 				messages = fmt.Sprintf(`[{"role":"user","content":%s}]`, input.Raw)
 			} else {
-				messages = fmt.Sprintf(`[{"role":"user","content":[{"type":"text","text":%s}]}]`, ccEncode(input.Raw))
+				messages = fmt.Sprintf(`[{"role":"user","content":%s}]`, ccEncode(input.Raw))
 			}
 		}
 	}
@@ -468,9 +467,9 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 	return []byte(body)
 }
 
-// normalizeCCMessages converts OpenAI-format messages to command-code's expected format.
+// normalizeCCMessages converts messages to command-code's expected format.
 // - Filters out system messages (sent via params.system instead).
-// - Converts string content to array-of-blocks format: [{"type":"text","text":"..."}].
+// - Keeps string content as-is; the API accepts both string and array-of-blocks.
 func normalizeCCMessages(payload []byte) string {
 	msgs := gjson.GetBytes(payload, "messages")
 	if !msgs.Exists() {
@@ -483,21 +482,11 @@ func normalizeCCMessages(payload []byte) string {
 		if role == "system" {
 			continue
 		}
-
 		content := msg.Get("content")
-		// Convert string content to array of text blocks
-		if content.Type == gjson.String {
-			text := content.String()
-			contentRaw := fmt.Sprintf(`[{"type":"text","text":%s}]`, ccEncode(text))
-			converted = append(converted, json.RawMessage(
-				fmt.Sprintf(`{"role":%s,"content":%s}`, ccEncode(role), contentRaw),
-			))
-		} else {
-			// Already array or other — rebuild role+content
-			converted = append(converted, json.RawMessage(
-				fmt.Sprintf(`{"role":%s,"content":%s}`, ccEncode(role), content.Raw),
-			))
-		}
+		// Keep content as-is: both string and array-of-blocks are accepted
+		converted = append(converted, json.RawMessage(
+			fmt.Sprintf(`{"role":%s,"content":%s}`, ccEncode(role), content.Raw),
+		))
 	}
 
 	if len(converted) == 0 {
