@@ -136,7 +136,7 @@ func TestCommandCodeExecutor_buildRequestBody(t *testing.T) {
 			name:      "basic openai request",
 			payload:   `{"model":"test","messages":[{"role":"user","content":"hello"}],"stream":true}`,
 			srcFormat: "openai",
-			contains:  []string{`"content":"hello"`, `"role":"user"`},
+			contains:  []string{`"type":"text"`, `"text":"hello"`, `"role":"user"`},
 		},
 		{
 			name:      "config fields present",
@@ -148,7 +148,7 @@ func TestCommandCodeExecutor_buildRequestBody(t *testing.T) {
 			name:      "responses input handled",
 			payload:   `{"model":"test","input":"hello world","stream":true}`,
 			srcFormat: "openai-response",
-			contains:  []string{`"role":"user"`, `"content":"hello world"`},
+			contains:  []string{`"type":"text"`, `"text":"hello world"`, `"role":"user"`},
 		},
 		{
 			name:      "instructions extracted as system",
