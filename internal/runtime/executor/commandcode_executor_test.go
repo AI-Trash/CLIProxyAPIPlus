@@ -172,14 +172,12 @@ func TestCommandCodeExecutor_buildRequestBody_ContentFormat(t *testing.T) {
 		excludes []string
 	}{
 		{
-			name: "converts string content to array",
+			name: "keeps string content as-is",
 			payload: `{"model":"test","messages":[
 				{"role":"user","content":"hello"}
 			]}`,
 			contains: []string{
-				`"type":"text"`,
-				`"text":"hello"`,
-				`"role":"user"`,
+				`"content":"hello"`,
 			},
 		},
 		{
@@ -204,8 +202,7 @@ func TestCommandCodeExecutor_buildRequestBody_ContentFormat(t *testing.T) {
 			name: "handles Codex response format input string",
 			payload: `{"model":"test","input":"hello world"}`,
 			contains: []string{
-				`"type":"text"`,
-				`"text":"hello world"`,
+				`"content":"hello world"`,
 				`"role":"user"`,
 			},
 		},
