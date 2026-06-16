@@ -3,7 +3,8 @@ name: docker-image
 # Builds and publishes the multi-arch Docker image for CLIProxyAPIPlus.
 #
 # Triggers:
-#   - push of any v* tag
+#   - push to main -> build & push :latest only
+#   - push of any v* tag -> build & push :tag + :latest
 #   - workflow_dispatch with optional `tag` input
 #
 # Architecture: native ARM64 / AMD64 partner jobs (no QEMU), merged into
@@ -22,6 +23,8 @@ on:
         required: false
         type: string
   push:
+    branches:
+      - main
     tags:
       - 'v*'
 
@@ -45,6 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       ref: ${{ steps.ref.outputs.ref }}
+      is_tag: ${{ steps.ref.outputs.is_tag }}
       version: ${{ steps.meta.outputs.version }}
       commit: ${{ steps.meta.outputs.commit }}
       build_date: ${{ steps.meta.outputs.build_date }}
@@ -57,9 +61,19 @@ jobs:
       - name: Resolve build ref
         id: ref
         run: |
-          REF="${{ inputs.tag }}"
-          if [ -z "${REF}" ]; then REF="${GITHUB_REF_NAME}"; fi
+          REF="${GITHUB_REF_NAME}"
+          # workflow_dispatch may supply an explicit tag
+          if [ -n "${{ inputs.tag }}" ]; then REF="${{ inputs.tag }}"; fi
           echo "ref=${REF}" >> "$GITHUB_OUTPUT"
+
+          # Determine mode: tag push -> versioned, otherwise latest-only
+          if echo "${GITHUB_REF}" | grep -q '^refs/tags/'; then
+            echo "is_tag=true" >> "$GITHUB_OUTPUT"
+          elif [ -n "${{ inputs.tag }}" ]; then
+            echo "is_tag=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_tag=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -106,9 +120,17 @@ jobs:
         env:
           GHCR_REF: ${{ steps.img.outputs.ghcr_ref }}
           VERSION: ${{ steps.meta.outputs.version }}
+          IS_TAG: ${{ steps.ref.outputs.is_tag }}
         run: |
-          echo "tag_version=${GHCR_REF}:${VERSION}" >> "$GITHUB_OUTPUT"
+          # Always push to latest
           echo "tag_latest=${GHCR_REF}:latest" >> "$GITHUB_OUTPUT"
+
+          if [ "${IS_TAG}" = "true" ]; then
+            echo "tag_version=${GHCR_REF}:${VERSION}" >> "$GITHUB_OUTPUT"
+          else
+            # Branch push: version tag is same as latest (only latest pushed)
+            echo "tag_version=${GHCR_REF}:latest" >> "$GITHUB_OUTPUT"
+          fi
 
   # ── AMD64 build ──────────────────────────────────────────────────────────
   build-amd64:
@@ -231,6 +253,7 @@ jobs:
         env:
           TAG_VERSION: ${{ needs.meta.outputs.tag_version }}
           TAG_LATEST: ${{ needs.meta.outputs.tag_latest }}
+          IS_TAG: ${{ needs.meta.outputs.is_tag }}
         run: |
           set -euo pipefail
           AMEND=""
@@ -239,8 +262,10 @@ jobs:
             AMEND="${AMEND} --amend ${TAG_VERSION}${SUFFIX}"
           done
 
-          docker manifest create ${TAG_VERSION} ${AMEND}
-          docker manifest push ${TAG_VERSION}
+          if [ "${IS_TAG}" = "true" ]; then
+            docker manifest create ${TAG_VERSION} ${AMEND}
+            docker manifest push ${TAG_VERSION}
+          fi
 
           docker manifest create ${TAG_LATEST} ${AMEND}
           docker manifest push ${TAG_LATEST}
@@ -250,6 +275,7 @@ jobs:
         env:
           DOCKERHUB_REF: ${{ needs.meta.outputs.dockerhub_ref }}
           TAG_VERSION: ${{ needs.meta.outputs.tag_version }}
+          IS_TAG: ${{ needs.meta.outputs.is_tag }}
         run: |
           set -euo pipefail
           VERSION_TAG="${DOCKERHUB_REF}:${TAG_VERSION##*:}"
@@ -259,8 +285,10 @@ jobs:
             AMEND="${AMEND} --amend ${TAG_VERSION}${SUFFIX}"
           done
 
-          docker manifest create ${VERSION_TAG} ${AMEND}
-          docker manifest push ${VERSION_TAG}
+          if [ "${IS_TAG}" = "true" ]; then
+            docker manifest create ${VERSION_TAG} ${AMEND}
+            docker manifest push ${VERSION_TAG}
+          fi
 
           docker manifest create ${LATEST_TAG} ${AMEND}
           docker manifest push ${LATEST_TAG}
@@ -270,21 +298,24 @@ jobs:
           GHCR_REF: ${{ needs.meta.outputs.ghcr_ref }}
           DOCKERHUB_REF: ${{ needs.meta.outputs.dockerhub_ref }}
           VERSION: ${{ needs.meta.outputs.version }}
+          IS_TAG: ${{ needs.meta.outputs.is_tag }}
           DOCKERHUB_ENABLED: ${{ needs.meta.outputs.dockerhub_enabled }}
         run: |
           {
             echo "## Published"
-            echo "- \`${GHCR_REF}:${VERSION}\`"
             echo "- \`${GHCR_REF}:latest\`"
+            if [ "${IS_TAG}" = "true" ]; then
+              echo "- \`${GHCR_REF}:${VERSION}\`"
+            fi
             if [ "${DOCKERHUB_ENABLED}" = "true" ]; then
-              echo "- \`${DOCKERHUB_REF}:${VERSION}\`"
               echo "- \`${DOCKERHUB_REF}:latest\`"
+              if [ "${IS_TAG}" = "true" ]; then
+                echo "- \`${DOCKERHUB_REF}:${VERSION}\`"
+              fi
               echo
-              echo "Pull: \`docker pull ${DOCKERHUB_REF}:${VERSION}\`"
+              echo "Pull: \`docker pull ${DOCKERHUB_REF}:latest\`"
             else
               echo
-              echo "Docker Hub skipped."
-              echo
-              echo "Pull: \`docker pull ${GHCR_REF}:${VERSION}\`"
+              echo "Pull: \`docker pull ${GHCR_REF}:latest\`"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
