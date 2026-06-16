@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
@@ -378,7 +379,8 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 	payload := req.Payload
 	model := req.Model
 
-	messages := gjson.GetBytes(payload, "messages").Raw
+	// Convert messages: command-code expects content as array of blocks, not plain strings
+	messages := normalizeCCMessages(payload)
 	if messages == "" {
 		messages = "[]"
 	}
@@ -400,9 +402,10 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 	params := fmt.Sprintf(`"model":%s,"messages":%s,"max_tokens":%d,"temperature":%f,"stream":%v`,
 		ccEncode(model), messages, maxTokens, temperature, stream)
 
-	// Wrap in the command-code request structure
-	body := fmt.Sprintf(`{"params":{%s},"mode":"tool-desc","config":{"environment":"production"},"memory":"","taste":"","skills":""}`,
-		params)
+	// command-code requires a full config block
+	body := fmt.Sprintf(
+		`{"params":{%s},"mode":"tool-desc","config":{"environment":"production","workingDir":"/workspace","date":"%s","structure":[],"isGitRepo":false,"currentBranch":"","mainBranch":"","gitStatus":"","recentCommits":[]},"memory":"","taste":"","skills":""}`,
+		params, time.Now().UTC().Format("2006-01-02"))
 
 	// Add system prompt if present
 	if system := extractSystemFromMessages(payload); system != "" {
@@ -414,6 +417,45 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 	}
 
 	return []byte(body)
+}
+
+// normalizeCCMessages converts OpenAI-format messages to command-code's expected format.
+// The API expects content as an array of blocks, e.g. [{"type":"text","text":"hi"}].
+func normalizeCCMessages(payload []byte) string {
+	msgs := gjson.GetBytes(payload, "messages")
+	if !msgs.Exists() {
+		return "[]"
+	}
+
+	var sb strings.Builder
+	sb.WriteByte('[')
+	first := true
+	for _, msg := range msgs.Array() {
+		role := msg.Get("role").String()
+		if role == "" {
+			continue
+		}
+		content := msg.Get("content")
+
+		// Convert string content to array format
+		var contentJSON string
+		if content.Type == gjson.String {
+			text := content.String()
+			contentJSON = fmt.Sprintf(`[{"type":"text","text":%s}]`, ccEncode(text))
+		} else if content.IsArray() {
+			contentJSON = content.Raw
+		} else {
+			contentJSON = content.Raw
+		}
+
+		if !first {
+			sb.WriteByte(',')
+		}
+		first = false
+		fmt.Fprintf(&sb, `{"role":%s,"content":%s}`, ccEncode(role), contentJSON)
+	}
+	sb.WriteByte(']')
+	return sb.String()
 }
 
 func extractSystemFromMessages(payload []byte) string {
