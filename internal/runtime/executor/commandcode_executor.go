@@ -420,39 +420,48 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 }
 
 // normalizeCCMessages converts OpenAI-format messages to command-code's expected format.
-// The API expects content as an array of blocks, e.g. [{"type":"text","text":"hi"}].
+// - Filters out system messages (sent via params.system instead).
+// - Converts string content to array-of-blocks format: [{"type":"text","text":"..."}].
 func normalizeCCMessages(payload []byte) string {
 	msgs := gjson.GetBytes(payload, "messages")
 	if !msgs.Exists() {
 		return "[]"
 	}
 
-	var sb strings.Builder
-	sb.WriteByte('[')
-	first := true
+	converted := make([]json.RawMessage, 0, len(msgs.Array()))
 	for _, msg := range msgs.Array() {
 		role := msg.Get("role").String()
-		if role == "" {
+		if role == "system" {
 			continue
 		}
-		content := msg.Get("content")
 
-		// Convert string content to array format
-		var contentJSON string
+		content := msg.Get("content")
+		// Convert string content to array of text blocks
 		if content.Type == gjson.String {
 			text := content.String()
-			contentJSON = fmt.Sprintf(`[{"type":"text","text":%s}]`, ccEncode(text))
-		} else if content.IsArray() {
-			contentJSON = content.Raw
+			contentRaw := fmt.Sprintf(`[{"type":"text","text":%s}]`, ccEncode(text))
+			converted = append(converted, json.RawMessage(
+				fmt.Sprintf(`{"role":%s,"content":%s}`, ccEncode(role), contentRaw),
+			))
 		} else {
-			contentJSON = content.Raw
+			// Already array or other — rebuild role+content
+			converted = append(converted, json.RawMessage(
+				fmt.Sprintf(`{"role":%s,"content":%s}`, ccEncode(role), content.Raw),
+			))
 		}
+	}
 
-		if !first {
+	if len(converted) == 0 {
+		return "[]"
+	}
+
+	var sb strings.Builder
+	sb.WriteByte('[')
+	for i, m := range converted {
+		if i > 0 {
 			sb.WriteByte(',')
 		}
-		first = false
-		fmt.Fprintf(&sb, `{"role":%s,"content":%s}`, ccEncode(role), contentJSON)
+		sb.Write(m)
 	}
 	sb.WriteByte(']')
 	return sb.String()
