@@ -415,8 +415,21 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 	payload := req.Payload
 	model := req.Model
 
-	// Convert messages: command-code expects content as array of blocks, not plain strings
+	// Handle Codex responses format: "input" field instead of "messages"
 	messages := normalizeCCMessages(payload)
+	if messages == "" || messages == "[]" {
+		// Check for Codex response format: {"input": "text"} or {"input": [...]}
+		if input := gjson.GetBytes(payload, "input"); input.Exists() {
+			if input.Type == gjson.String {
+				messages = fmt.Sprintf(`[{"role":"user","content":[{"type":"text","text":%s}]}]`, ccEncode(input.String()))
+			} else if input.IsArray() {
+				// input is already a content blocks array
+				messages = fmt.Sprintf(`[{"role":"user","content":%s}]`, input.Raw)
+			} else {
+				messages = fmt.Sprintf(`[{"role":"user","content":[{"type":"text","text":%s}]}]`, ccEncode(input.Raw))
+			}
+		}
+	}
 	if messages == "" {
 		messages = "[]"
 	}
@@ -504,6 +517,10 @@ func normalizeCCMessages(payload []byte) string {
 }
 
 func extractSystemFromMessages(payload []byte) string {
+	// Check Codex response format: "instructions" field
+	if inst := gjson.GetBytes(payload, "instructions"); inst.Exists() && inst.String() != "" {
+		return inst.String()
+	}
 	for _, msg := range gjson.GetBytes(payload, "messages").Array() {
 		if msg.Get("role").String() == "system" {
 			content := msg.Get("content")
