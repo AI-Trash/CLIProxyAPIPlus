@@ -464,7 +464,16 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 		body, _ = sjson.Set(body, "params.reasoning_effort", cfg.Value())
 	}
 
+	log.Infof("[commandcode] built request body: targetModel=%s srcFormat=%s bodyPreview=%s",
+		req.Model, opts.SourceFormat, summary([]byte(body), 400))
 	return []byte(body)
+}
+
+func summary(s []byte, n int) string {
+	if len(s) <= n {
+		return string(s)
+	}
+	return string(s[:n]) + "..."
 }
 
 // normalizeCCMessages converts messages to command-code's expected format.
