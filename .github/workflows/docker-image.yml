@@ -12,7 +12,7 @@ name: docker-image
 # linux/amd64 and linux/arm64 from a single x64 host.
 #
 # Registries:
-#   - GHCR: ghcr.io/<owner>/cli-proxy-api-plus using built-in GITHUB_TOKEN
+#   - GHCR: ghcr.io/<repository> (built-in GITHUB_TOKEN)
 #   - Docker Hub: kaitranntt/cli-proxy-api-plus when DOCKERHUB_TOKEN is
 #     configured (DOCKERHUB_USERNAME is optional; defaults to kaitranntt)
 
@@ -31,7 +31,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   APP_NAME: CLIProxyAPI
   GHCR_REGISTRY: ghcr.io
-  GHCR_IMAGE_NAME: ${{ github.repository_owner }}/cli-proxy-api-plus
+  GHCR_IMAGE_NAME: ${{ github.repository }}
   DOCKERHUB_IMAGE_NAME: kaitranntt/cli-proxy-api-plus
 
 permissions:

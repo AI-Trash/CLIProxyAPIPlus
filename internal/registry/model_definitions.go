@@ -108,7 +108,7 @@ func codexBuiltinImageModelInfo() *ModelInfo {
 	return &ModelInfo{
 		ID:          codexBuiltinImageModelID,
 		Object:      "model",
-		Created:     1704067200, // 2024-01-01
+		Created:     1704067200,
 		OwnedBy:     "openai",
 		Type:        "openai",
 		DisplayName: "GPT Image 2",
@@ -120,7 +120,7 @@ func xaiBuiltinImageModelInfo() *ModelInfo {
 	return &ModelInfo{
 		ID:          xaiBuiltinImageModelID,
 		Object:      "model",
-		Created:     1735689600, // 2025-01-01
+		Created:     1735689600,
 		OwnedBy:     "xai",
 		Type:        "xai",
 		DisplayName: "Grok Imagine Image",
@@ -133,7 +133,7 @@ func xaiBuiltinImageQualityModelInfo() *ModelInfo {
 	return &ModelInfo{
 		ID:          xaiBuiltinImageQualityModelID,
 		Object:      "model",
-		Created:     1735689600, // 2025-01-01
+		Created:     1735689600,
 		OwnedBy:     "xai",
 		Type:        "xai",
 		DisplayName: "Grok Imagine Image Quality",
@@ -146,7 +146,7 @@ func xaiBuiltinVideoModelInfo() *ModelInfo {
 	return &ModelInfo{
 		ID:          xaiBuiltinVideoModelID,
 		Object:      "model",
-		Created:     1735689600, // 2025-01-01
+		Created:     1735689600,
 		OwnedBy:     "xai",
 		Type:        "xai",
 		DisplayName: "Grok Imagine Video",
@@ -159,7 +159,7 @@ func xaiBuiltinVideo15PreviewModelInfo() *ModelInfo {
 	return &ModelInfo{
 		ID:          xaiBuiltinVideo15PreviewModelID,
 		Object:      "model",
-		Created:     1735689600, // 2025-01-01
+		Created:     1735689600,
 		OwnedBy:     "xai",
 		Type:        "xai",
 		DisplayName: "Grok Imagine Video 1.5 Preview",
@@ -212,6 +212,102 @@ func upsertModelInfos(models []*ModelInfo, extras ...*ModelInfo) []*ModelInfo {
 
 	filtered = append(filtered, extraList...)
 	return filtered
+}
+
+// GetCommandCodeModels returns the available model definitions for Command Code.
+// Command Code uses provider-prefixed model IDs (e.g. "anthropic:claude-sonnet-4-6").
+func GetCommandCodeModels() []*ModelInfo {
+	now := int64(1732752000)
+	return []*ModelInfo{
+		{
+			ID:            "anthropic:claude-sonnet-4-6",
+			Object:        "model",
+			Created:       now,
+			OwnedBy:       "commandcode",
+			Type:          "commandcode",
+			DisplayName:   "Claude Sonnet 4.6",
+			Description:   "Anthropic Claude Sonnet 4.6 via Command Code",
+			ContextLength: 200000,
+			SupportedEndpoints: []string{"/chat/completions"},
+		},
+		{
+			ID:            "anthropic:claude-opus-4-5-20251101",
+			Object:        "model",
+			Created:       now,
+			OwnedBy:       "commandcode",
+			Type:          "commandcode",
+			DisplayName:   "Claude Opus 4.5",
+			Description:   "Anthropic Claude Opus 4.5 via Command Code",
+			ContextLength: 200000,
+			SupportedEndpoints: []string{"/chat/completions"},
+		},
+		{
+			ID:            "anthropic:claude-opus-4-6",
+			Object:        "model",
+			Created:       now,
+			OwnedBy:       "commandcode",
+			Type:          "commandcode",
+			DisplayName:   "Claude Opus 4.6",
+			Description:   "Anthropic Claude Opus 4.6 via Command Code",
+			ContextLength: 200000,
+			SupportedEndpoints: []string{"/chat/completions"},
+		},
+		{
+			ID:            "anthropic:claude-opus-4-8",
+			Object:        "model",
+			Created:       now,
+			OwnedBy:       "commandcode",
+			Type:          "commandcode",
+			DisplayName:   "Claude Opus 4.8",
+			Description:   "Anthropic Claude Opus 4.8 via Command Code",
+			ContextLength: 200000,
+			SupportedEndpoints: []string{"/chat/completions"},
+		},
+		{
+			ID:            "anthropic:claude-haiku-4-5-20251001",
+			Object:        "model",
+			Created:       now,
+			OwnedBy:       "commandcode",
+			Type:          "commandcode",
+			DisplayName:   "Claude Haiku 4.5",
+			Description:   "Anthropic Claude Haiku 4.5 via Command Code",
+			ContextLength: 200000,
+			SupportedEndpoints: []string{"/chat/completions"},
+		},
+		{
+			ID:            "openai:gpt-5.4",
+			Object:        "model",
+			Created:       now,
+			OwnedBy:       "commandcode",
+			Type:          "commandcode",
+			DisplayName:   "GPT-5.4",
+			Description:   "OpenAI GPT-5.4 via Command Code",
+			ContextLength: 200000,
+			SupportedEndpoints: []string{"/chat/completions"},
+		},
+		{
+			ID:            "openai:gpt-5.4-mini",
+			Object:        "model",
+			Created:       now,
+			OwnedBy:       "commandcode",
+			Type:          "commandcode",
+			DisplayName:   "GPT-5.4 Mini",
+			Description:   "OpenAI GPT-5.4 Mini via Command Code",
+			ContextLength: 128000,
+			SupportedEndpoints: []string{"/chat/completions"},
+		},
+		{
+			ID:            "openai:gpt-5.5",
+			Object:        "model",
+			Created:       now,
+			OwnedBy:       "commandcode",
+			Type:          "commandcode",
+			DisplayName:   "GPT-5.5",
+			Description:   "OpenAI GPT-5.5 via Command Code",
+			ContextLength: 200000,
+			SupportedEndpoints: []string{"/chat/completions"},
+		},
+	}
 }
 
 // cloneModelInfos returns a shallow copy of the slice with each element deep-cloned.
@@ -270,6 +366,8 @@ func GetStaticModelDefinitionsByChannel(channel string) []*ModelInfo {
 		return GetXAIModels()
 	case "qoder":
 		return GetQoderModels()
+	case "commandcode":
+		return GetCommandCodeModels()
 	default:
 		return nil
 	}
@@ -306,6 +404,11 @@ func LookupStaticModelInfo(modelID string) *ModelInfo {
 		data.Antigravity,
 		data.XAI,
 		data.Qoder,
+		GetGitHubCopilotModels(),
+		GetKiroModels(),
+		GetKiloModels(),
+		GetAmazonQModels(),
+		GetCommandCodeModels(),
 	}
 	for _, models := range allModels {
 		for _, m := range models {

@@ -13,11 +13,13 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/auth/gemini"
+	commandcodetoken "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/commandcode"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/misc"
@@ -355,6 +357,134 @@ func performGeminiCLISetup(ctx context.Context, httpClient *http.Client, storage
 	}
 }
 
+// DoCommandCodeImport imports credentials from the native command-code CLI auth.json file.
+// The native CLI stores auth at ~/.commandcode/auth.json with the format:
+//
+//	{
+//	  "apiKey": "...",
+//	  "userName": "...",
+//	  "anthropic": {"access": "...", "refresh": "...", ...},
+//	  "codex": {"access": "...", "refresh": "...", ...},
+//	  ...
+//	}
+func DoCommandCodeImport(cfg *config.Config, nativePath string) {
+	if cfg == nil {
+		log.Error("config is nil")
+		return
+	}
+
+	// Expand ~ to home directory
+	nativePath = expandHomePath(nativePath)
+
+	data, err := os.ReadFile(nativePath)
+	if err != nil {
+		log.Errorf("failed to read native auth file %s: %v", nativePath, err)
+		return
+	}
+
+	var nativeAuth struct {
+		ApiKey       string `json:"apiKey"`
+		UserName     string `json:"userName"`
+		Anthropic    *struct {
+			Type    string `json:"type"`
+			Access  string `json:"access"`
+			Refresh string `json:"refresh"`
+			Expires int64  `json:"expires"`
+		} `json:"anthropic"`
+		Codex *struct {
+			Type    string `json:"type"`
+			Access  string `json:"access"`
+			Refresh string `json:"refresh"`
+			Expires int64  `json:"expires"`
+		} `json:"codex"`
+		GithubCopilot *struct {
+			Type    string `json:"type"`
+			Access  string `json:"access"`
+			Refresh string `json:"refresh"`
+			Expires int64  `json:"expires"`
+		} `json:"github-copilot"`
+	}
+	if errJSON := json.Unmarshal(data, &nativeAuth); errJSON != nil {
+		log.Errorf("failed to parse native auth file: %v", errJSON)
+		return
+	}
+
+	if nativeAuth.ApiKey == "" {
+		log.Error("native auth file does not contain an apiKey")
+		return
+	}
+
+	email := nativeAuth.UserName
+	if email == "" {
+		email = "imported"
+	}
+
+	// Determine which OAuth provider to use (prefer Anthropic, then Codex)
+	var oauthProvider, oauthToken, oauthRefresh string
+	var oauthExpires int64
+	if nativeAuth.Anthropic != nil && nativeAuth.Anthropic.Access != "" {
+		oauthProvider = "anthropic"
+		oauthToken = nativeAuth.Anthropic.Access
+		oauthRefresh = nativeAuth.Anthropic.Refresh
+		oauthExpires = nativeAuth.Anthropic.Expires
+		fmt.Printf("Found Anthropic OAuth token (expires at %d)\n", oauthExpires)
+	} else if nativeAuth.Codex != nil && nativeAuth.Codex.Access != "" {
+		oauthProvider = "codex"
+		oauthToken = nativeAuth.Codex.Access
+		oauthRefresh = nativeAuth.Codex.Refresh
+		oauthExpires = nativeAuth.Codex.Expires
+		fmt.Printf("Found Codex OAuth token (expires at %d)\n", oauthExpires)
+	} else if nativeAuth.GithubCopilot != nil && nativeAuth.GithubCopilot.Access != "" {
+		oauthProvider = "github-copilot"
+		oauthToken = nativeAuth.GithubCopilot.Access
+		oauthRefresh = nativeAuth.GithubCopilot.Refresh
+		oauthExpires = nativeAuth.GithubCopilot.Expires
+		fmt.Printf("Found GitHub Copilot OAuth token (expires at %d)\n", oauthExpires)
+	}
+
+	authDir := cfg.AuthDir
+	if errMkdir := os.MkdirAll(authDir, 0700); errMkdir != nil {
+		log.Errorf("failed to create auth directory: %v", errMkdir)
+		return
+	}
+
+	fileName := commandcodetoken.CredentialFileName(email)
+	filePath := filepath.Join(authDir, fileName)
+
+	storage := &commandcodetoken.CommandCodeTokenStorage{
+		ApiKey:        nativeAuth.ApiKey,
+		Email:         email,
+		OAuthProvider: oauthProvider,
+		OAuthToken:    oauthToken,
+		OAuthRefresh:  oauthRefresh,
+		OAuthExpires:  oauthExpires,
+	}
+	if errSave := storage.SaveTokenToFile(filePath); errSave != nil {
+		log.Errorf("failed to save command-code credentials: %v", errSave)
+		return
+	}
+
+	fmt.Printf("Imported Command Code credentials from %s\n", nativePath)
+	fmt.Printf("Saved to: %s\n", filePath)
+	fmt.Printf("API key user: %s\n", nativeAuth.UserName)
+	if oauthProvider != "" {
+		fmt.Printf("Upstream OAuth provider: %s\n", oauthProvider)
+	} else {
+		fmt.Println("WARNING: No upstream OAuth tokens found. You may need to run 'cmdc' and set up a provider first.")
+		fmt.Println("The /alpha/generate endpoint may require upstream OAuth tokens (x-oauth-token header).")
+	}
+}
+
+func expandHomePath(path string) string {
+	if strings.HasPrefix(path, "~") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			return filepath.Join(home, path[1:])
+		}
+	}
+	return path
+}
+
 func callGeminiCLI(ctx context.Context, httpClient *http.Client, endpoint string, body any, result any) error {
 	url := fmt.Sprintf("%s/%s:%s", geminiCLIEndpoint, geminiCLIVersion, endpoint)
 	if strings.HasPrefix(endpoint, "operations/") {
@@ -660,4 +790,122 @@ func updateAuthRecord(record *cliproxyauth.Auth, storage *gemini.GeminiTokenStor
 	record.ID = finalName
 	record.FileName = finalName
 	record.Storage = storage
+}
+
+// DoCommandCodeLogin performs Command Code API key authentication.
+// It prompts the user for their API key and email, then saves the credentials
+// to the auths directory as a JSON file.
+func DoCommandCodeLogin(cfg *config.Config, options *LoginOptions) {
+	if cfg == nil {
+		log.Error("config is nil")
+		return
+	}
+	reader := bufio.NewReader(os.Stdin)
+
+	fmt.Print("Enter Command Code API key: ")
+	apiKey, err := reader.ReadString('\n')
+	if err != nil {
+		log.Errorf("failed to read API key: %v", err)
+		return
+	}
+	apiKey = strings.TrimSpace(apiKey)
+	if apiKey == "" {
+		fmt.Println("API key cannot be empty")
+		return
+	}
+
+	fmt.Print("Enter email (optional): ")
+	email, _ := reader.ReadString('\n')
+	email = strings.TrimSpace(email)
+
+	// Validate the API key against the command-code API
+	fmt.Println("Validating API key...")
+	if errValidate := validateCommandCodeAPIKey(apiKey, cfg); errValidate != nil {
+		log.Errorf("API key validation failed: %v", errValidate)
+		fmt.Println("WARNING: API key validation failed, but the key will still be saved.")
+		fmt.Println("You can test connectivity by starting the server and sending a request.")
+	}
+
+	authDir := cfg.AuthDir
+	if errMkdir := os.MkdirAll(authDir, 0700); errMkdir != nil {
+		log.Errorf("failed to create auth directory: %v", errMkdir)
+		return
+	}
+
+	fileName := buildCommandCodeFileName(email)
+	filePath := filepath.Join(authDir, fileName)
+
+	storage := &commandcodetoken.CommandCodeTokenStorage{
+		ApiKey: apiKey,
+		Email:  email,
+	}
+	if errSave := storage.SaveTokenToFile(filePath); errSave != nil {
+		log.Errorf("failed to save command-code credentials: %v", errSave)
+		return
+	}
+
+	fmt.Printf("Command Code credentials saved to: %s\n", filePath)
+	if email != "" {
+		fmt.Printf("Logged in as: %s\n", email)
+	}
+}
+
+func buildCommandCodeFileName(email string) string {
+	if email != "" {
+		return fmt.Sprintf("commandcode-%s.json", sanitizeFileName(email))
+	}
+	return "commandcode.json"
+}
+
+func sanitizeFileName(s string) string {
+	replacer := strings.NewReplacer(
+		"@", "_at_",
+		":", "_",
+		"/", "_",
+		"\\", "_",
+		" ", "_",
+	)
+	return replacer.Replace(s)
+}
+
+func validateCommandCodeAPIKey(apiKey string, _ *config.Config) error {
+	baseURL := "https://api.commandcode.ai"
+	client := &http.Client{Timeout: 15 * time.Second}
+
+	req, err := http.NewRequest(http.MethodGet, baseURL+"/alpha/whoami", nil)
+	if err != nil {
+		return fmt.Errorf("failed to create validation request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-command-code-version", "0.38.2")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("network error during validation: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 401 {
+		return fmt.Errorf("invalid API key (HTTP 401)")
+	}
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("API returned HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	var whoami struct {
+		UserName string `json:"userName"`
+		Email    string `json:"email"`
+	}
+	if errDecode := json.NewDecoder(resp.Body).Decode(&whoami); errDecode == nil {
+		if whoami.UserName != "" {
+			fmt.Printf("Authenticated as: %s\n", whoami.UserName)
+		}
+		if whoami.Email != "" {
+			fmt.Printf("Email: %s\n", whoami.Email)
+		}
+	}
+
+	return nil
 }

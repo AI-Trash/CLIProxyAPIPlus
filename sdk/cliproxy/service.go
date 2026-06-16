@@ -994,6 +994,8 @@ func (s *Service) registerExecutorForAuth(a *coreauth.Auth, forceReplace bool) {
 		s.coreManager.RegisterExecutor(executor.NewGitLabExecutor(s.cfg))
 	case "qoder":
 		s.coreManager.RegisterExecutor(executor.NewQoderExecutor(s.cfg))
+	case "commandcode":
+		s.coreManager.RegisterExecutor(executor.NewCommandCodeExecutor(s.cfg))
 	default:
 		providerKey := strings.ToLower(strings.TrimSpace(a.Provider))
 		if providerKey == "" {
@@ -1887,6 +1889,9 @@ func (s *Service) registerModelsForAuth(ctx context.Context, a *coreauth.Auth) {
 		models = applyExcludedModels(models, excluded)
 	case "qoder":
 		models = executor.FetchQoderModels(context.Background(), a, s.cfg)
+		models = applyExcludedModels(models, excluded)
+	case "commandcode":
+		models = registry.GetCommandCodeModels()
 		models = applyExcludedModels(models, excluded)
 	default:
 		// Handle OpenAI-compatibility providers by name using config
