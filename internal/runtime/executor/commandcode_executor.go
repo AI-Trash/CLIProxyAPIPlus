@@ -169,6 +169,10 @@ func (e *CommandCodeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Au
 // ExecuteStream performs a streaming request via /alpha/generate.
 // The response is line-delimited JSON (NOT standard SSE with "data:" prefix).
 // Each line is a JSON object like {"type":"text-delta","text":"hello"}.
+//
+// Output format depends on the request endpoint:
+//   - /v1/chat/completions (SourceFormat="openai"): outputs OpenAI SSE chunks
+//   - /v1/responses (SourceFormat="openai-response"): outputs Codex response format
 func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (_ *cliproxyexecutor.StreamResult, err error) {
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
 	reporter := newUsageReporter(ctx, e.Identifier(), baseModel, auth)
@@ -212,14 +216,18 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 		defer close(out)
 		defer httpResp.Body.Close()
 
-			scanner := bufio.NewScanner(httpResp.Body)
-			scanner.Buffer(nil, 52_428_800)
+		scanner := bufio.NewScanner(httpResp.Body)
+		scanner.Buffer(nil, 52_428_800)
 
-			var (
-				finished  bool
-				usageSent bool
-				accText   strings.Builder
-			)
+		isResponses := opts.SourceFormat.String() == "openai-response"
+		var (
+			finished      bool
+			usageSent     bool
+			accText       strings.Builder
+			responsesInit bool
+			promptTokens  int64
+			completionTokens int64
+		)
 
 		for scanner.Scan() {
 			line := bytes.TrimSpace(scanner.Bytes())
@@ -228,9 +236,6 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 				continue
 			}
 
-			// Alpha generate streams raw JSON lines, NOT "data:" prefix SSE.
-			// Skip this block: our executor now handles raw JSON directly.
-			// But to be safe, strip any "data:" prefix if present.
 			if bytes.HasPrefix(line, []byte("data:")) {
 				line = bytes.TrimSpace(line[5:])
 			}
@@ -240,14 +245,26 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 			switch {
 			case chunkType == "text-delta":
 				text := gjson.GetBytes(line, "text").String()
-				if text != "" {
-					accText.WriteString(text)
+				if text == "" {
+					continue
+				}
+				accText.WriteString(text)
+
+				if isResponses {
+					if !responsesInit {
+						responsesInit = true
+						out <- cliproxyexecutor.StreamChunk{Payload: responsesCreated()}
+						out <- cliproxyexecutor.StreamChunk{Payload: responsesInProgress()}
+						out <- cliproxyexecutor.StreamChunk{Payload: responsesOutputItemAdded()}
+						out <- cliproxyexecutor.StreamChunk{Payload: responsesContentPartAdded()}
+					}
+					out <- cliproxyexecutor.StreamChunk{Payload: responsesTextDelta(text)}
+				} else {
 					out <- cliproxyexecutor.StreamChunk{Payload: buildCCChunk(text)}
 				}
 
 			case chunkType == "finish":
 				finished = true
-				var promptTokens, completionTokens int64
 				usageNode := gjson.GetBytes(line, "totalUsage")
 				if usageNode.Exists() && !usageSent {
 					usageSent = true
@@ -266,7 +283,16 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 					}
 					reporter.publish(ctx, detail)
 				}
-				out <- cliproxyexecutor.StreamChunk{Payload: buildCCFinishChunk(promptTokens, completionTokens)}
+
+				if isResponses {
+					fullText := accText.String()
+					out <- cliproxyexecutor.StreamChunk{Payload: responsesTextDone(fullText)}
+					out <- cliproxyexecutor.StreamChunk{Payload: responsesContentPartDone(fullText)}
+					out <- cliproxyexecutor.StreamChunk{Payload: responsesOutputItemDone(fullText)}
+					out <- cliproxyexecutor.StreamChunk{Payload: responsesCompleted(promptTokens, completionTokens)}
+				} else {
+					out <- cliproxyexecutor.StreamChunk{Payload: buildCCFinishChunk(promptTokens, completionTokens)}
+				}
 
 			case chunkType == "error":
 				msg := gjson.GetBytes(line, "error.message").String()
@@ -276,9 +302,7 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 				if msg == "" {
 					msg = "stream error"
 				}
-				isRetryable := gjson.GetBytes(line, "error.isRetryable").Bool()
-				statusCode := gjson.GetBytes(line, "error.statusCode").Int()
-				log.Debugf("commandcode: stream error msg=%s retryable=%v status=%d", msg, isRetryable, statusCode)
+				log.Debugf("commandcode: stream error msg=%s", msg)
 				reporter.publishFailure(ctx)
 				out <- cliproxyexecutor.StreamChunk{Err: fmt.Errorf("%s", msg)}
 
@@ -288,9 +312,7 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 				return
 
 			default:
-				// reasoning-start, reasoning-delta, reasoning-end, tool-call, tool-result
-				// For now, silently skip these since we're translating to OpenAI chat format
-				// which doesn't natively expose reasoning blocks (use passthrough-headers if needed)
+				// reasoning-start/delta/end, tool-call, tool-result — skip
 			}
 		}
 
@@ -299,7 +321,12 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 			reporter.publishFailure(ctx)
 			out <- cliproxyexecutor.StreamChunk{Err: errScan}
 		} else if !finished {
-			out <- cliproxyexecutor.StreamChunk{Payload: []byte("data: [DONE]\n\n")}
+			if isResponses {
+				// Codex format needs response.completed even on unexpected end
+				out <- cliproxyexecutor.StreamChunk{Payload: responsesCompleted(0, 0)}
+			} else {
+				out <- cliproxyexecutor.StreamChunk{Payload: []byte("data: [DONE]\n\n")}
+			}
 		}
 		reporter.ensurePublished(ctx)
 	}()
@@ -523,6 +550,51 @@ func (e *CommandCodeExecutor) convertNonStreamToOpenAI(body []byte) ([]byte, usa
 	return []byte(openAIResp), detail
 }
 
+// ── Helpers: Codex response format (for /v1/responses endpoint) ─────────
+// The proxy's ConvertCodexResponseToOpenAI consumes these events and
+// converts them to OpenAI SSE for the client.
+
+func responsesCreated() []byte {
+	return []byte(`data: {"type":"response.created","response":{"id":"chatcmpl-cc","object":"response","created_at":0,"status":"in_progress","background":false,"error":null,"output":[]}}` + "\n\n")
+}
+
+func responsesInProgress() []byte {
+	return []byte(`data: {"type":"response.in_progress","response":{"id":"chatcmpl-cc","object":"response","created_at":0,"status":"in_progress"}}` + "\n\n")
+}
+
+func responsesOutputItemAdded() []byte {
+	return []byte(`data: {"type":"response.output_item.added","output_index":0,"item":{"id":"msg_chatcmpl-cc_0","type":"message","status":"in_progress","content":[],"role":"assistant"}}` + "\n\n")
+}
+
+func responsesContentPartAdded() []byte {
+	return []byte(`data: {"type":"response.content_part.added","item_id":"msg_chatcmpl-cc_0","output_index":0,"content_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""}}` + "\n\n")
+}
+
+func responsesTextDelta(text string) []byte {
+	return []byte(fmt.Sprintf(`data: {"type":"response.output_text.delta","item_id":"msg_chatcmpl-cc_0","output_index":0,"content_index":0,"delta":%s,"logprobs":[]}%s`,
+		ccEncode(text), "\n\n"))
+}
+
+func responsesTextDone(text string) []byte {
+	return []byte(fmt.Sprintf(`data: {"type":"response.output_text.done","item_id":"msg_chatcmpl-cc_0","output_index":0,"content_index":0,"text":%s,"logprobs":[]}%s`,
+		ccEncode(text), "\n\n"))
+}
+
+func responsesContentPartDone(text string) []byte {
+	return []byte(fmt.Sprintf(`data: {"type":"response.content_part.done","item_id":"msg_chatcmpl-cc_0","output_index":0,"content_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":%s}}%s`,
+		ccEncode(text), "\n\n"))
+}
+
+func responsesOutputItemDone(text string) []byte {
+	return []byte(fmt.Sprintf(`data: {"type":"response.output_item.done","output_index":0,"item":{"id":"msg_chatcmpl-cc_0","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":%s}],"role":"assistant"}}%s`,
+		ccEncode(text), "\n\n"))
+}
+
+func responsesCompleted(promptTokens, completionTokens int64) []byte {
+	return []byte(fmt.Sprintf(`data: {"type":"response.completed","response":{"id":"chatcmpl-cc","object":"response","created_at":0,"status":"completed","model":"commandcode","output":[],"usage":{"input_tokens":%d,"output_tokens":%d,"total_tokens":%d}}}%s`,
+		promptTokens, completionTokens, promptTokens+completionTokens, "\n\n"))
+}
+
 func ccEncode(v string) string {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
@@ -536,13 +608,13 @@ func ccEncode(v string) string {
 }
 
 func buildCCChunk(text string) []byte {
-	return []byte(fmt.Sprintf(`data: {"id":"chatcmpl-cc","object":"chat.completion.chunk","created":0,"model":"commandcode","choices":[{"index":0,"delta":{"content":%s},"finish_reason":null}]}%s`, ccEncode(text), "\n\n"))
+	return []byte(fmt.Sprintf(`{"id":"chatcmpl-cc","object":"chat.completion.chunk","created":0,"model":"commandcode","choices":[{"index":0,"delta":{"content":%s},"finish_reason":null}]}`, ccEncode(text)))
 }
 
 func buildCCFinishChunk(promptTokens, completionTokens int64) []byte {
 	if promptTokens > 0 || completionTokens > 0 {
-		return []byte(fmt.Sprintf(`data: {"id":"chatcmpl-cc","object":"chat.completion.chunk","created":0,"model":"commandcode","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":%d,"completion_tokens":%d,"total_tokens":%d}}%s`,
-			promptTokens, completionTokens, promptTokens+completionTokens, "\n\n"))
+		return []byte(fmt.Sprintf(`{"id":"chatcmpl-cc","object":"chat.completion.chunk","created":0,"model":"commandcode","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":%d,"completion_tokens":%d,"total_tokens":%d}}`,
+			promptTokens, completionTokens, promptTokens+completionTokens))
 	}
-	return []byte(`data: {"id":"chatcmpl-cc","object":"chat.completion.chunk","created":0,"model":"commandcode","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}` + "\n\n")
+	return []byte(`{"id":"chatcmpl-cc","object":"chat.completion.chunk","created":0,"model":"commandcode","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`)
 }
