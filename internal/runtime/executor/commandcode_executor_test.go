@@ -200,6 +200,22 @@ func TestCommandCodeExecutor_buildRequestBody_ContentFormat(t *testing.T) {
 				`"isGitRepo"`,
 			},
 		},
+		{
+			name: "handles Codex response format input string",
+			payload: `{"model":"test","input":"hello world"}`,
+			contains: []string{
+				`"type":"text"`,
+				`"text":"hello world"`,
+				`"role":"user"`,
+			},
+		},
+		{
+			name: "handles Codex response format instructions",
+			payload: `{"model":"test","input":"hi","instructions":"be helpful"}`,
+			contains: []string{
+				`"system":"be helpful"`,
+			},
+		},
 	}
 
 	for _, tt := range tests {
