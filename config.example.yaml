@@ -344,31 +344,68 @@ nonstream-keepalive-interval: 0
 
 # Command Code (API key-based)
 # Command Code provides AI models via its own API at https://api.commandcode.ai.
-# It uses the /alpha/generate private protocol (the same one used by their CLI).
-# The /provider/v1/ endpoints may be restricted for certain subscription tiers.
+# It uses the /alpha/generate private protocol (the same one used by the CLI).
+#
+# Go plan ($1/mo): open-source models only. Pro+ plans: premium models included.
+# See https://commandcode.ai/docs/resources/pricing-limits for full model list.
 #
 # To set up:
-#   1. Use the CLI command: ./server --commandcode-login
-#      This will prompt for your API key and save credentials to the auth directory.
-#   2. Or manually create a JSON file in the auths/ directory:
-#      {
-#        "type": "commandcode",
-#        "api_key": "your-api-key-here",
-#        "email": "user@example.com"
-#      }
+#   1. Login with the native CLI first: cmdc login && cmdc (select a provider for OAuth)
+#   2. Import credentials: ./server --commandcode-import ~/.commandcode/auth.json
+#   3. Or manually create a JSON file in the auths/ directory:
+#      {"type": "commandcode", "api_key": "cc_...", "email": "user@example.com"}
 #
-# Available models (use oauth-model-alias for friendly names):
-#   anthropic:claude-sonnet-4-6, anthropic:claude-opus-4-5-20251101,
-#   anthropic:claude-opus-4-6, anthropic:claude-opus-4-8,
-#   anthropic:claude-haiku-4-5-20251001,
-#   openai:gpt-5.4, openai:gpt-5.4-mini, openai:gpt-5.5
-#
+# Model aliases (mapping canonical IDs to friendly names):
 # oauth-model-alias:
 #   commandcode:
+#     # DeepSeek (Go-plan, 75% off permanently)
+#     - name: "deepseek/deepseek-v4-pro"
+#       alias: "deepseek-v4-pro"
+#     - name: "deepseek/deepseek-v4-flash"
+#       alias: "deepseek-v4-flash"
+#     # Kimi (Go-plan)
+#     - name: "moonshotai/Kimi-K2.5"
+#       alias: "kimi-k2.5"
+#     - name: "moonshotai/Kimi-K2.6"
+#       alias: "kimi-k2.6"
+#     # GLM (Go-plan)
+#     - name: "zai-org/GLM-5"
+#       alias: "glm-5"
+#     - name: "zai-org/GLM-5.1"
+#       alias: "glm-5.1"
+#     # MiniMax (Go-plan)
+#     - name: "MiniMaxAI/MiniMax-M2.5"
+#       alias: "minimax-m2.5"
+#     - name: "MiniMaxAI/MiniMax-M2.7"
+#       alias: "minimax-m2.7"
+#     # MiMo (Go-plan, 98-99% off)
+#     - name: "xiaomi/mimo-v2.5"
+#       alias: "mimo-v2.5"
+#     - name: "xiaomi/mimo-v2.5-pro"
+#       alias: "mimo-v2.5-pro"
+#     # Nemotron (Go-plan, 57% off)
+#     - name: "nvidia/nemotron-3-ultra-550b-a55b"
+#       alias: "nemotron-3-ultra"
+#     # Qwen (Go-plan)
+#     - name: "Qwen/Qwen3.7-Max"
+#       alias: "qwen-3.7-max"
+#     - name: "Qwen/Qwen3.6-Max-Preview"
+#       alias: "qwen-3.6-max-preview"
+#     # StepFun (Go-plan)
+#     - name: "stepfun/step-3.7-flash"
+#       alias: "step-3.7-flash"
+#     - name: "stepfun/Step-3.5-Flash"
+#       alias: "step-3.5-flash"
+#     # Claude (premium, Pro+ plans)
 #     - name: "anthropic:claude-sonnet-4-6"
 #       alias: "claude-sonnet-4-6"
+#     - name: "anthropic:claude-opus-4-8"
+#       alias: "claude-opus-4-8"
+#     # GPT (premium, Pro+ plans)
 #     - name: "openai:gpt-5.4"
 #       alias: "gpt-5.4"
+#     - name: "openai:gpt-5.5"
+#       alias: "gpt-5.5"
 
 # OpenAI compatibility providers
 # openai-compatibility:
