@@ -220,16 +220,21 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 		scanner.Buffer(nil, 52_428_800)
 
 		isResponses := opts.SourceFormat.String() == "openai-response"
+		log.Infof("[commandcode] ExecuteStream start model=%s sourceFormat=%s isResponses=%v", req.Model, opts.SourceFormat, isResponses)
+
 		var (
-			finished      bool
-			usageSent     bool
-			accText       strings.Builder
-			responsesInit bool
-			promptTokens  int64
+			finished         bool
+			usageSent        bool
+			accText          strings.Builder
+			responsesInit    bool
+			promptTokens     int64
 			completionTokens int64
+			chunkCount       int
+			textChunkCount   int
 		)
 
 		for scanner.Scan() {
+			chunkCount++
 			line := bytes.TrimSpace(scanner.Bytes())
 			appendAPIResponseChunk(ctx, e.cfg, line)
 			if len(line) == 0 {
@@ -244,6 +249,7 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 
 			switch {
 			case chunkType == "text-delta":
+				textChunkCount++
 				text := gjson.GetBytes(line, "text").String()
 				if text == "" {
 					continue
@@ -253,6 +259,7 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 				if isResponses {
 					if !responsesInit {
 						responsesInit = true
+						log.Info("[commandcode] emitting Codex response init events (response.created, in_progress, output_item.added, content_part.added)")
 						out <- cliproxyexecutor.StreamChunk{Payload: responsesCreated()}
 						out <- cliproxyexecutor.StreamChunk{Payload: responsesInProgress()}
 						out <- cliproxyexecutor.StreamChunk{Payload: responsesOutputItemAdded()}
@@ -265,6 +272,8 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 
 			case chunkType == "finish":
 				finished = true
+				log.Infof("[commandcode] finish event received: isResponses=%v promptTokens=%d completionTokens=%d",
+					isResponses, promptTokens, completionTokens)
 				usageNode := gjson.GetBytes(line, "totalUsage")
 				if usageNode.Exists() && !usageSent {
 					usageSent = true
@@ -286,10 +295,12 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 
 				if isResponses {
 					fullText := accText.String()
+					log.Infof("[commandcode] emitting Codex completion events: textDone, contentPartDone, outputItemDone, completed (textLen=%d)", len(fullText))
 					out <- cliproxyexecutor.StreamChunk{Payload: responsesTextDone(fullText)}
 					out <- cliproxyexecutor.StreamChunk{Payload: responsesContentPartDone(fullText)}
 					out <- cliproxyexecutor.StreamChunk{Payload: responsesOutputItemDone(fullText)}
 					out <- cliproxyexecutor.StreamChunk{Payload: responsesCompleted(promptTokens, completionTokens)}
+					log.Infof("[commandcode] response.completed emitted with promptTokens=%d completionTokens=%d", promptTokens, completionTokens)
 				} else {
 					out <- cliproxyexecutor.StreamChunk{Payload: buildCCFinishChunk(promptTokens, completionTokens)}
 				}
@@ -317,16 +328,21 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 		}
 
 		if errScan := scanner.Err(); errScan != nil {
+			log.Errorf("[commandcode] scanner error: %v", errScan)
 			recordAPIResponseError(ctx, e.cfg, errScan)
 			reporter.publishFailure(ctx)
 			out <- cliproxyexecutor.StreamChunk{Err: errScan}
 		} else if !finished {
+			log.Warnf("[commandcode] stream ended without finish event: chunkCount=%d textChunkCount=%d isResponses=%v",
+				chunkCount, textChunkCount, isResponses)
 			if isResponses {
-				// Codex format needs response.completed even on unexpected end
 				out <- cliproxyexecutor.StreamChunk{Payload: responsesCompleted(0, 0)}
 			} else {
 				out <- cliproxyexecutor.StreamChunk{Payload: []byte("data: [DONE]\n\n")}
 			}
+		} else {
+			log.Infof("[commandcode] stream completed: chunkCount=%d textChunkCount=%d textLen=%d isResponses=%v promptTokens=%d completionTokens=%d",
+				chunkCount, textChunkCount, accText.Len(), isResponses, promptTokens, completionTokens)
 		}
 		reporter.ensurePublished(ctx)
 	}()
