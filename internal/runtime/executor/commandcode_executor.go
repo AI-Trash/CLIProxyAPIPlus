@@ -163,7 +163,13 @@ func (e *CommandCodeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Au
 	}
 	reporter.ensurePublished(ctx)
 
-	return cliproxyexecutor.Response{Payload: openAIResp, Headers: httpResp.Header.Clone()}, nil
+	from := opts.SourceFormat
+	responseFormat := cliproxyexecutor.ResponseFormatOrSource(opts)
+	to := sdktranslator.FromString("openai")
+	translated := sdktranslator.TranslateRequest(from, to, baseModel, req.Payload, false)
+	var param any
+	out := sdktranslator.TranslateNonStream(ctx, to, responseFormat, req.Model, opts.OriginalRequest, translated, openAIResp, &param)
+	return cliproxyexecutor.Response{Payload: out, Headers: httpResp.Header.Clone()}, nil
 }
 
 // ExecuteStream performs a streaming request via /alpha/generate.
@@ -220,11 +226,13 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 		scanner.Buffer(nil, 52_428_800)
 
 		to := sdktranslator.FromString("openai")
-		from := opts.SourceFormat
+		responseFormat := cliproxyexecutor.ResponseFormatOrSource(opts)
+		translated := sdktranslator.TranslateRequest(opts.SourceFormat, to, baseModel, req.Payload, true)
 		var param any
 
 		var (
 			finished         bool
+			doneSent         bool
 			usageSent        bool
 			accText          strings.Builder
 			promptTokens     int64
@@ -260,10 +268,7 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 
 				// Build OpenAI SSE chunk, then translate to source format
 				chunk := buildCCChunk(text)
-				chunks := sdktranslator.TranslateStream(ctx, to, from, req.Model, opts.OriginalRequest, nil, chunk, &param)
-				for _, c := range chunks {
-					out <- cliproxyexecutor.StreamChunk{Payload: c}
-				}
+				emitCommandCodeTranslatedStreamChunk(ctx, out, to, responseFormat, req.Model, opts.OriginalRequest, translated, chunk, &param)
 
 			case chunkType == "finish":
 				finished = true
@@ -286,10 +291,9 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 					reporter.publish(ctx, detail)
 				}
 				chunk := buildCCFinishChunk(promptTokens, completionTokens)
-				chunks := sdktranslator.TranslateStream(ctx, to, from, req.Model, opts.OriginalRequest, nil, chunk, &param)
-				for _, c := range chunks {
-					out <- cliproxyexecutor.StreamChunk{Payload: c}
-				}
+				emitCommandCodeTranslatedStreamChunk(ctx, out, to, responseFormat, req.Model, opts.OriginalRequest, translated, chunk, &param)
+				emitCommandCodeTranslatedStreamChunk(ctx, out, to, responseFormat, req.Model, opts.OriginalRequest, translated, []byte("data: [DONE]"), &param)
+				doneSent = true
 
 			case chunkType == "error":
 				msg := gjson.GetBytes(line, "error.message").String()
@@ -320,10 +324,15 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 			out <- cliproxyexecutor.StreamChunk{Err: errScan}
 		} else if !finished {
 			log.Warnf("[commandcode] stream ended without finish event: chunkCount=%d", chunkCount)
-			out <- cliproxyexecutor.StreamChunk{Payload: []byte("data: [DONE]\n\n")}
+			emitCommandCodeTranslatedStreamChunk(ctx, out, to, responseFormat, req.Model, opts.OriginalRequest, translated, buildCCFinishChunk(promptTokens, completionTokens), &param)
+			emitCommandCodeTranslatedStreamChunk(ctx, out, to, responseFormat, req.Model, opts.OriginalRequest, translated, []byte("data: [DONE]"), &param)
+			doneSent = true
 		} else {
 			log.Infof("[commandcode] stream completed: chunkCount=%d textChunkCount=%d textLen=%d promptTokens=%d completionTokens=%d",
 				chunkCount, textChunkCount, accText.Len(), promptTokens, completionTokens)
+		}
+		if finished && !doneSent {
+			emitCommandCodeTranslatedStreamChunk(ctx, out, to, responseFormat, req.Model, opts.OriginalRequest, translated, []byte("data: [DONE]"), &param)
 		}
 		reporter.ensurePublished(ctx)
 	}()
@@ -574,13 +583,24 @@ func ccEncode(v string) string {
 }
 
 func buildCCChunk(text string) []byte {
-	return []byte(fmt.Sprintf(`{"id":"chatcmpl-cc","object":"chat.completion.chunk","created":0,"model":"commandcode","choices":[{"index":0,"delta":{"content":%s},"finish_reason":null}]}`, ccEncode(text)))
+	return []byte(fmt.Sprintf(`data: {"id":"chatcmpl-cc","object":"chat.completion.chunk","created":0,"model":"commandcode","choices":[{"index":0,"delta":{"content":%s},"finish_reason":null}]}`, ccEncode(text)))
+}
+
+func emitCommandCodeTranslatedStreamChunk(ctx context.Context, out chan<- cliproxyexecutor.StreamChunk, to, responseFormat sdktranslator.Format, model string, originalRequest, request, chunk []byte, param *any) {
+	chunks := sdktranslator.TranslateStream(ctx, to, responseFormat, model, originalRequest, request, chunk, param)
+	for _, c := range chunks {
+		select {
+		case out <- cliproxyexecutor.StreamChunk{Payload: c}:
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 func buildCCFinishChunk(promptTokens, completionTokens int64) []byte {
 	if promptTokens > 0 || completionTokens > 0 {
-		return []byte(fmt.Sprintf(`{"id":"chatcmpl-cc","object":"chat.completion.chunk","created":0,"model":"commandcode","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":%d,"completion_tokens":%d,"total_tokens":%d}}`,
+		return []byte(fmt.Sprintf(`data: {"id":"chatcmpl-cc","object":"chat.completion.chunk","created":0,"model":"commandcode","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":%d,"completion_tokens":%d,"total_tokens":%d}}`,
 			promptTokens, completionTokens, promptTokens+completionTokens))
 	}
-	return []byte(`{"id":"chatcmpl-cc","object":"chat.completion.chunk","created":0,"model":"commandcode","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`)
+	return []byte(`data: {"id":"chatcmpl-cc","object":"chat.completion.chunk","created":0,"model":"commandcode","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`)
 }
