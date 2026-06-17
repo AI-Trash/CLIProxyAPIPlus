@@ -19,7 +19,7 @@ func TestCommandCodeExecutor_ExecuteStream_CodexResponseFormat(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Write([]byte(`{"type":"text-delta","text":"Hello"}` + "\n"))
 		w.Write([]byte(`{"type":"text-delta","text":" world"}` + "\n"))
-		w.Write([]byte(`{"type":"finish","totalUsage":{"inputTokens":10,"outputTokens":5,"totalTokens":15}}` + "\n"))
+		w.Write([]byte(`{"type":"finish","totalUsage":{"inputTokens":10,"outputTokens":5,"totalTokens":15,"inputTokenDetails":{"cacheReadTokens":4}}}` + "\n"))
 	}))
 	defer upstream.Close()
 
@@ -74,13 +74,16 @@ func TestCommandCodeExecutor_ExecuteStream_CodexResponseFormat(t *testing.T) {
 	if !strings.Contains(joined, `"output_tokens":5`) {
 		t.Errorf("missing responses output usage\nGot:\n%s", joined)
 	}
+	if !strings.Contains(joined, `"cached_tokens":4`) {
+		t.Errorf("missing cached tokens\nGot:\n%s", joined)
+	}
 }
 
 func TestCommandCodeExecutor_ExecuteStream_OpenAIFormat(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Write([]byte(`{"type":"text-delta","text":"Hello"}` + "\n"))
-		w.Write([]byte(`{"type":"finish","totalUsage":{"inputTokens":10,"outputTokens":5}}` + "\n"))
+		w.Write([]byte(`{"type":"finish","totalUsage":{"inputTokens":10,"outputTokens":5,"inputTokenDetails":{"cacheReadTokens":6}}}` + "\n"))
 	}))
 	defer upstream.Close()
 
@@ -127,6 +130,9 @@ func TestCommandCodeExecutor_ExecuteStream_OpenAIFormat(t *testing.T) {
 	}
 	if !strings.Contains(joined, `"prompt_tokens":10`) {
 		t.Errorf("missing usage\nGot:\n%s", joined)
+	}
+	if !strings.Contains(joined, `"prompt_tokens_details":{"cached_tokens":6}`) {
+		t.Errorf("missing cached token usage\nGot:\n%s", joined)
 	}
 }
 
