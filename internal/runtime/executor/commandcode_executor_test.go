@@ -130,6 +130,118 @@ func TestCommandCodeExecutor_ExecuteStream_OpenAIFormat(t *testing.T) {
 	}
 }
 
+func TestCommandCodeExecutor_ExecuteStream_OpenAIFormatToolCall(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte(`{"type":"text-delta","text":"Let me look at the project structure."}` + "\n"))
+		w.Write([]byte(`{"type":"tool-call","toolCallId":"call_list","toolName":"list_files","input":{"path":"."}}` + "\n"))
+		w.Write([]byte(`{"type":"finish","finishReason":"tool-calls","totalUsage":{"inputTokens":12,"outputTokens":7}}` + "\n"))
+	}))
+	defer upstream.Close()
+
+	exec := NewCommandCodeExecutor(&config.Config{})
+	auth := &cliproxyauth.Auth{
+		ID:         "test-auth",
+		Provider:   "commandcode",
+		Metadata:   map[string]any{"api_key": "test-key", "base_url": upstream.URL},
+		Attributes: map[string]string{"base_url": upstream.URL},
+	}
+
+	req := cliproxyexecutor.Request{
+		Model:   "deepseek-v4-pro",
+		Payload: []byte(`{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"what is this project"}],"stream":true,"tools":[{"type":"function","function":{"name":"list_files","parameters":{"type":"object","properties":{"path":{"type":"string"}}}}}]}`),
+	}
+	opts := cliproxyexecutor.Options{
+		Stream:          true,
+		SourceFormat:    sdktranslator.FromString("openai"),
+		OriginalRequest: req.Payload,
+	}
+
+	result, err := exec.ExecuteStream(context.Background(), auth, req, opts)
+	if err != nil {
+		t.Fatalf("ExecuteStream failed: %v", err)
+	}
+
+	var chunks []string
+	for ch := range result.Chunks {
+		if ch.Err != nil {
+			t.Fatalf("stream error: %v", ch.Err)
+		}
+		if ch.Payload != nil {
+			chunks = append(chunks, string(ch.Payload))
+		}
+	}
+
+	joined := strings.Join(chunks, "\n")
+	if !strings.Contains(joined, `"tool_calls":[{"index":0,"id":"call_list"`) {
+		t.Fatalf("missing OpenAI tool call delta\nGot:\n%s", joined)
+	}
+	if !strings.Contains(joined, `"name":"list_files"`) {
+		t.Fatalf("missing tool name\nGot:\n%s", joined)
+	}
+	if !strings.Contains(joined, `"arguments":"{\"path\":\".\"}"`) {
+		t.Fatalf("missing tool arguments\nGot:\n%s", joined)
+	}
+	if !strings.Contains(joined, `"finish_reason":"tool_calls"`) {
+		t.Fatalf("missing tool_calls finish reason\nGot:\n%s", joined)
+	}
+}
+
+func TestCommandCodeExecutor_ExecuteStream_ResponsesFormatToolCall(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte(`{"type":"tool-call","toolCallId":"call_read","toolName":"read_file","input":{"filePath":"README.md"}}` + "\n"))
+		w.Write([]byte(`{"type":"finish","finishReason":"tool-calls","totalUsage":{"inputTokens":11,"outputTokens":3}}` + "\n"))
+	}))
+	defer upstream.Close()
+
+	exec := NewCommandCodeExecutor(&config.Config{})
+	auth := &cliproxyauth.Auth{
+		ID:         "test-auth",
+		Provider:   "commandcode",
+		Metadata:   map[string]any{"api_key": "test-key", "base_url": upstream.URL},
+		Attributes: map[string]string{"base_url": upstream.URL},
+	}
+
+	req := cliproxyexecutor.Request{
+		Model:   "deepseek-v4-pro",
+		Payload: []byte(`{"model":"deepseek-v4-pro","input":"inspect","stream":true,"tools":[{"type":"function","name":"read_file","parameters":{"type":"object"}}]}`),
+	}
+	opts := cliproxyexecutor.Options{
+		Stream:          true,
+		SourceFormat:    sdktranslator.FromString("openai-response"),
+		OriginalRequest: req.Payload,
+	}
+
+	result, err := exec.ExecuteStream(context.Background(), auth, req, opts)
+	if err != nil {
+		t.Fatalf("ExecuteStream failed: %v", err)
+	}
+
+	var chunks []string
+	for ch := range result.Chunks {
+		if ch.Err != nil {
+			t.Fatalf("stream error: %v", ch.Err)
+		}
+		if ch.Payload != nil {
+			chunks = append(chunks, string(ch.Payload))
+		}
+	}
+
+	joined := strings.Join(chunks, "\n")
+	if !strings.Contains(joined, `"type":"response.output_item.added"`) ||
+		!strings.Contains(joined, `"type":"function_call"`) ||
+		!strings.Contains(joined, `"call_id":"call_read"`) {
+		t.Fatalf("missing Responses function_call events\nGot:\n%s", joined)
+	}
+	if !strings.Contains(joined, `"type":"response.function_call_arguments.done"`) {
+		t.Fatalf("missing Responses function_call arguments done\nGot:\n%s", joined)
+	}
+	if !strings.Contains(joined, `"type":"response.completed"`) {
+		t.Fatalf("missing Responses completed event\nGot:\n%s", joined)
+	}
+}
+
 func TestCommandCodeExecutor_ExecuteStream_ClaudeFormat(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -250,6 +362,29 @@ func TestCommandCodeExecutor_buildRequestBody(t *testing.T) {
 			payload:   `{"model":"test","input":"hi","instructions":"be helpful","stream":true}`,
 			srcFormat: "openai-response",
 			contains:  []string{`"system":"be helpful"`},
+		},
+		{
+			name:      "openai tools passed through",
+			payload:   `{"model":"test","messages":[{"role":"user","content":"inspect"}],"stream":true,"tools":[{"type":"function","function":{"name":"list_files","description":"List files","parameters":{"type":"object","properties":{"path":{"type":"string"}}}}}],"tool_choice":"auto","parallel_tool_calls":true}`,
+			srcFormat: "openai",
+			contains: []string{
+				`"tools":[{"type":"function","name":"list_files","description":"List files","input_schema":{"type":"object","properties":{"path":{"type":"string"}}}}]`,
+				`"tool_choice":"auto"`,
+				`"parallel_tool_calls":true`,
+			},
+		},
+		{
+			name:      "tool history converted",
+			payload:   `{"model":"test","messages":[{"role":"assistant","content":"checking","tool_calls":[{"id":"call_read","type":"function","function":{"name":"read_file","arguments":"{\"filePath\":\"README.md\"}"}}]},{"role":"tool","tool_call_id":"call_read","content":"done"},{"role":"user","content":"continue"}],"stream":true}`,
+			srcFormat: "openai",
+			contains: []string{
+				`"type":"tool-call"`,
+				`"toolCallId":"call_read"`,
+				`"toolName":"read_file"`,
+				`"input":{"filePath":"README.md"}`,
+				`"type":"tool-result"`,
+				`"output":{"type":"text","value":"done"}`,
+			},
 		},
 	}
 
