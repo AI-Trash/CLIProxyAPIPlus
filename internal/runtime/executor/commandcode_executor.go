@@ -238,6 +238,7 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 			accText          strings.Builder
 			promptTokens     int64
 			completionTokens int64
+			cachedTokens     int64
 			chunkCount       int
 			textChunkCount   int
 			toolCallCount    int
@@ -309,6 +310,7 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 					}
 					if cached := usageNode.Get("inputTokenDetails.cacheReadTokens"); cached.Exists() {
 						detail.CachedTokens = cached.Int()
+						cachedTokens = cached.Int()
 					}
 					detail.TotalTokens = promptTokens + completionTokens
 					if detail.TotalTokens == 0 {
@@ -317,7 +319,7 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 					reporter.publish(ctx, detail)
 				}
 				finishReason := mapCommandCodeFinishReason(gjson.GetBytes(line, "finishReason").String(), sawToolCall)
-				chunk := buildCCFinishChunk(promptTokens, completionTokens, finishReason)
+				chunk := buildCCFinishChunk(promptTokens, completionTokens, cachedTokens, finishReason)
 				emitCommandCodeTranslatedStreamChunk(ctx, out, to, responseFormat, req.Model, opts.OriginalRequest, translated, chunk, &param)
 				emitCommandCodeTranslatedStreamChunk(ctx, out, to, responseFormat, req.Model, opts.OriginalRequest, translated, []byte("data: [DONE]"), &param)
 				doneSent = true
@@ -351,7 +353,7 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 			out <- cliproxyexecutor.StreamChunk{Err: errScan}
 		} else if !finished {
 			log.Warnf("[commandcode] stream ended without finish event: chunkCount=%d", chunkCount)
-			emitCommandCodeTranslatedStreamChunk(ctx, out, to, responseFormat, req.Model, opts.OriginalRequest, translated, buildCCFinishChunk(promptTokens, completionTokens, mapCommandCodeFinishReason("", sawToolCall)), &param)
+			emitCommandCodeTranslatedStreamChunk(ctx, out, to, responseFormat, req.Model, opts.OriginalRequest, translated, buildCCFinishChunk(promptTokens, completionTokens, cachedTokens, mapCommandCodeFinishReason("", sawToolCall)), &param)
 			emitCommandCodeTranslatedStreamChunk(ctx, out, to, responseFormat, req.Model, opts.OriginalRequest, translated, []byte("data: [DONE]"), &param)
 			doneSent = true
 		} else {
@@ -837,13 +839,13 @@ func emitCommandCodeTranslatedStreamChunk(ctx context.Context, out chan<- clipro
 	}
 }
 
-func buildCCFinishChunk(promptTokens, completionTokens int64, finishReason string) []byte {
+func buildCCFinishChunk(promptTokens, completionTokens, cachedTokens int64, finishReason string) []byte {
 	if finishReason == "" {
 		finishReason = "stop"
 	}
-	if promptTokens > 0 || completionTokens > 0 {
-		return []byte(fmt.Sprintf(`data: {"id":"chatcmpl-cc","object":"chat.completion.chunk","created":0,"model":"commandcode","choices":[{"index":0,"delta":{},"finish_reason":%s}],"usage":{"prompt_tokens":%d,"completion_tokens":%d,"total_tokens":%d}}`,
-			ccEncode(finishReason), promptTokens, completionTokens, promptTokens+completionTokens))
+	if promptTokens > 0 || completionTokens > 0 || cachedTokens > 0 {
+		return []byte(fmt.Sprintf(`data: {"id":"chatcmpl-cc","object":"chat.completion.chunk","created":0,"model":"commandcode","choices":[{"index":0,"delta":{},"finish_reason":%s}],"usage":{"prompt_tokens":%d,"prompt_tokens_details":{"cached_tokens":%d},"completion_tokens":%d,"total_tokens":%d}}`,
+			ccEncode(finishReason), promptTokens, cachedTokens, completionTokens, promptTokens+completionTokens))
 	}
 	return []byte(fmt.Sprintf(`data: {"id":"chatcmpl-cc","object":"chat.completion.chunk","created":0,"model":"commandcode","choices":[{"index":0,"delta":{},"finish_reason":%s}]}`, ccEncode(finishReason)))
 }
