@@ -234,11 +234,13 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 			finished         bool
 			doneSent         bool
 			usageSent        bool
+			sawToolCall      bool
 			accText          strings.Builder
 			promptTokens     int64
 			completionTokens int64
 			chunkCount       int
 			textChunkCount   int
+			toolCallCount    int
 		)
 
 		log.Infof("[commandcode] ExecuteStream start model=%s sourceFormat=%s", req.Model, opts.SourceFormat)
@@ -270,6 +272,30 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 				chunk := buildCCChunk(text)
 				emitCommandCodeTranslatedStreamChunk(ctx, out, to, responseFormat, req.Model, opts.OriginalRequest, translated, chunk, &param)
 
+			case chunkType == "tool-call":
+				id := gjson.GetBytes(line, "toolCallId").String()
+				if id == "" {
+					id = gjson.GetBytes(line, "id").String()
+				}
+				if id == "" {
+					id = "call_" + strings.ReplaceAll(uuid.New().String(), "-", "")
+				}
+				name := gjson.GetBytes(line, "toolName").String()
+				if name == "" {
+					name = gjson.GetBytes(line, "name").String()
+				}
+				if name == "" {
+					log.Debugf("commandcode: skipping tool-call with empty name")
+					continue
+				}
+
+				sawToolCall = true
+				toolIndex := toolCallCount
+				toolCallCount++
+				arguments := commandCodeToolArguments(line)
+				chunk := buildCCToolCallChunk(toolIndex, id, name, arguments)
+				emitCommandCodeTranslatedStreamChunk(ctx, out, to, responseFormat, req.Model, opts.OriginalRequest, translated, chunk, &param)
+
 			case chunkType == "finish":
 				finished = true
 				usageNode := gjson.GetBytes(line, "totalUsage")
@@ -290,7 +316,8 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 					}
 					reporter.publish(ctx, detail)
 				}
-				chunk := buildCCFinishChunk(promptTokens, completionTokens)
+				finishReason := mapCommandCodeFinishReason(gjson.GetBytes(line, "finishReason").String(), sawToolCall)
+				chunk := buildCCFinishChunk(promptTokens, completionTokens, finishReason)
 				emitCommandCodeTranslatedStreamChunk(ctx, out, to, responseFormat, req.Model, opts.OriginalRequest, translated, chunk, &param)
 				emitCommandCodeTranslatedStreamChunk(ctx, out, to, responseFormat, req.Model, opts.OriginalRequest, translated, []byte("data: [DONE]"), &param)
 				doneSent = true
@@ -324,12 +351,12 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 			out <- cliproxyexecutor.StreamChunk{Err: errScan}
 		} else if !finished {
 			log.Warnf("[commandcode] stream ended without finish event: chunkCount=%d", chunkCount)
-			emitCommandCodeTranslatedStreamChunk(ctx, out, to, responseFormat, req.Model, opts.OriginalRequest, translated, buildCCFinishChunk(promptTokens, completionTokens), &param)
+			emitCommandCodeTranslatedStreamChunk(ctx, out, to, responseFormat, req.Model, opts.OriginalRequest, translated, buildCCFinishChunk(promptTokens, completionTokens, mapCommandCodeFinishReason("", sawToolCall)), &param)
 			emitCommandCodeTranslatedStreamChunk(ctx, out, to, responseFormat, req.Model, opts.OriginalRequest, translated, []byte("data: [DONE]"), &param)
 			doneSent = true
 		} else {
-			log.Infof("[commandcode] stream completed: chunkCount=%d textChunkCount=%d textLen=%d promptTokens=%d completionTokens=%d",
-				chunkCount, textChunkCount, accText.Len(), promptTokens, completionTokens)
+			log.Infof("[commandcode] stream completed: chunkCount=%d textChunkCount=%d toolCallCount=%d textLen=%d promptTokens=%d completionTokens=%d",
+				chunkCount, textChunkCount, toolCallCount, accText.Len(), promptTokens, completionTokens)
 		}
 		if finished && !doneSent {
 			emitCommandCodeTranslatedStreamChunk(ctx, out, to, responseFormat, req.Model, opts.OriginalRequest, translated, []byte("data: [DONE]"), &param)
@@ -461,6 +488,15 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 	if cfg := gjson.GetBytes(translated, "reasoning_effort"); cfg.Exists() {
 		body, _ = sjson.Set(body, "params.reasoning_effort", cfg.Value())
 	}
+	if tools := convertToolsForCC(translated); tools != "[]" {
+		body, _ = sjson.SetRaw(body, "params.tools", tools)
+	}
+	if toolChoice := gjson.GetBytes(translated, "tool_choice"); toolChoice.Exists() {
+		body, _ = sjson.SetRaw(body, "params.tool_choice", toolChoice.Raw)
+	}
+	if parallelToolCalls := gjson.GetBytes(translated, "parallel_tool_calls"); parallelToolCalls.Exists() {
+		body, _ = sjson.Set(body, "params.parallel_tool_calls", parallelToolCalls.Bool())
+	}
 
 	log.Infof("[commandcode] built request body: targetModel=%s srcFormat=%s bodyPreview=%s",
 		req.Model, opts.SourceFormat, summary([]byte(body), 400))
@@ -484,6 +520,7 @@ func convertMessagesForCC(translated []byte) (messages, system string) {
 		return "[]", ""
 	}
 
+	pairedToolCallIDs := commandCodePairedToolCallIDs(msgs)
 	var converted []json.RawMessage
 	for _, msg := range msgs.Array() {
 		role := msg.Get("role").String()
@@ -496,12 +533,30 @@ func convertMessagesForCC(translated []byte) (messages, system string) {
 			}
 			continue
 		}
+		if role == "tool" {
+			toolCallID := msg.Get("tool_call_id").String()
+			if toolCallID == "" || !pairedToolCallIDs[toolCallID] {
+				continue
+			}
+			toolName := commandCodeToolNameForID(msgs, toolCallID)
+			toolContent := msg.Get("content").String()
+			contentJSON := fmt.Sprintf(`[{"type":"tool-result","toolCallId":%s,"toolName":%s,"output":{"type":"text","value":%s}}]`,
+				ccEncode(toolCallID), ccEncode(toolName), ccEncode(toolContent))
+			converted = append(converted, json.RawMessage(
+				fmt.Sprintf(`{"role":"tool","content":%s}`, contentJSON),
+			))
+			continue
+		}
 		content := msg.Get("content")
-		var contentJSON string
-		if content.Type == gjson.String {
-			contentJSON = fmt.Sprintf(`[{"type":"text","text":%s}]`, ccEncode(content.String()))
-		} else {
-			contentJSON = content.Raw
+		contentJSON := commandCodeMessageContent(content)
+		if role == "assistant" {
+			contentJSON = commandCodeAssistantContent(msg, contentJSON, pairedToolCallIDs)
+		}
+		if contentJSON == "" || contentJSON == "[]" {
+			if role == "assistant" {
+				continue
+			}
+			contentJSON = "[]"
 		}
 		converted = append(converted, json.RawMessage(
 			fmt.Sprintf(`{"role":%s,"content":%s}`, ccEncode(role), contentJSON),
@@ -522,6 +577,186 @@ func convertMessagesForCC(translated []byte) (messages, system string) {
 	}
 	sb.WriteByte(']')
 	return sb.String(), system
+}
+
+func commandCodePairedToolCallIDs(msgs gjson.Result) map[string]bool {
+	callIDs := make(map[string]bool)
+	resultIDs := make(map[string]bool)
+	for _, msg := range msgs.Array() {
+		switch msg.Get("role").String() {
+		case "assistant":
+			for _, toolCall := range msg.Get("tool_calls").Array() {
+				if id := toolCall.Get("id").String(); id != "" {
+					callIDs[id] = true
+				}
+			}
+			for _, part := range msg.Get("content").Array() {
+				if part.Get("type").String() == "tool-call" {
+					if id := part.Get("toolCallId").String(); id != "" {
+						callIDs[id] = true
+					}
+				}
+			}
+		case "tool":
+			if id := msg.Get("tool_call_id").String(); id != "" {
+				resultIDs[id] = true
+			}
+		}
+	}
+
+	paired := make(map[string]bool)
+	for id := range callIDs {
+		if resultIDs[id] {
+			paired[id] = true
+		}
+	}
+	return paired
+}
+
+func commandCodeToolNameForID(msgs gjson.Result, toolCallID string) string {
+	for _, msg := range msgs.Array() {
+		if msg.Get("role").String() != "assistant" {
+			continue
+		}
+		for _, toolCall := range msg.Get("tool_calls").Array() {
+			if toolCall.Get("id").String() == toolCallID {
+				return toolCall.Get("function.name").String()
+			}
+		}
+		for _, part := range msg.Get("content").Array() {
+			if part.Get("type").String() == "tool-call" && part.Get("toolCallId").String() == toolCallID {
+				return part.Get("toolName").String()
+			}
+		}
+	}
+	return ""
+}
+
+func commandCodeMessageContent(content gjson.Result) string {
+	if !content.Exists() {
+		return "[]"
+	}
+	if content.Type == gjson.String {
+		return fmt.Sprintf(`[{"type":"text","text":%s}]`, ccEncode(content.String()))
+	}
+	if content.IsArray() {
+		return content.Raw
+	}
+	if content.Raw != "" && content.Raw != "null" {
+		return fmt.Sprintf(`[{"type":"text","text":%s}]`, ccEncode(content.String()))
+	}
+	return "[]"
+}
+
+func commandCodeAssistantContent(msg gjson.Result, contentJSON string, pairedToolCallIDs map[string]bool) string {
+	var parts []json.RawMessage
+	content := msg.Get("content")
+	if content.Type == gjson.String && content.String() != "" {
+		parts = append(parts, json.RawMessage(fmt.Sprintf(`{"type":"text","text":%s}`, ccEncode(content.String()))))
+	} else if content.IsArray() {
+		for _, part := range content.Array() {
+			if part.Get("type").String() == "tool-call" {
+				id := part.Get("toolCallId").String()
+				if id == "" || !pairedToolCallIDs[id] {
+					continue
+				}
+				parts = append(parts, json.RawMessage(part.Raw))
+				continue
+			}
+			parts = append(parts, json.RawMessage(part.Raw))
+		}
+	}
+
+	for _, toolCall := range msg.Get("tool_calls").Array() {
+		id := toolCall.Get("id").String()
+		if id == "" || !pairedToolCallIDs[id] {
+			continue
+		}
+		name := toolCall.Get("function.name").String()
+		args := jsonObjectRaw(toolCall.Get("function.arguments"))
+		parts = append(parts, json.RawMessage(
+			fmt.Sprintf(`{"type":"tool-call","toolCallId":%s,"toolName":%s,"input":%s}`,
+				ccEncode(id), ccEncode(name), args),
+		))
+	}
+
+	if len(parts) == 0 {
+		return contentJSON
+	}
+	var sb strings.Builder
+	sb.WriteByte('[')
+	for i, part := range parts {
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		sb.Write(part)
+	}
+	sb.WriteByte(']')
+	return sb.String()
+}
+
+func convertToolsForCC(translated []byte) string {
+	tools := gjson.GetBytes(translated, "tools")
+	if !tools.Exists() || !tools.IsArray() {
+		return "[]"
+	}
+
+	var converted []json.RawMessage
+	for _, tool := range tools.Array() {
+		name := tool.Get("function.name").String()
+		description := tool.Get("function.description").String()
+		inputSchema := tool.Get("function.parameters")
+		if name == "" {
+			name = tool.Get("name").String()
+			description = tool.Get("description").String()
+			inputSchema = tool.Get("input_schema")
+		}
+		if name == "" {
+			continue
+		}
+
+		item := []byte(`{"type":"function","name":"","description":"","input_schema":{}}`)
+		item, _ = sjson.SetBytes(item, "name", name)
+		if description != "" {
+			item, _ = sjson.SetBytes(item, "description", description)
+		} else {
+			item, _ = sjson.DeleteBytes(item, "description")
+		}
+		if inputSchema.Exists() && inputSchema.Raw != "" && inputSchema.Raw != "null" {
+			item, _ = sjson.SetRawBytes(item, "input_schema", []byte(inputSchema.Raw))
+		}
+		converted = append(converted, json.RawMessage(item))
+	}
+
+	if len(converted) == 0 {
+		return "[]"
+	}
+	var sb strings.Builder
+	sb.WriteByte('[')
+	for i, tool := range converted {
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		sb.Write(tool)
+	}
+	sb.WriteByte(']')
+	return sb.String()
+}
+
+func jsonObjectRaw(value gjson.Result) string {
+	if !value.Exists() {
+		return "{}"
+	}
+	if value.IsObject() {
+		return value.Raw
+	}
+	if value.Type == gjson.String {
+		raw := strings.TrimSpace(value.String())
+		if raw != "" && gjson.Valid(raw) && gjson.Parse(raw).IsObject() {
+			return raw
+		}
+	}
+	return "{}"
 }
 
 func (e *CommandCodeExecutor) convertNonStreamToOpenAI(body []byte) ([]byte, usage.Detail) {
@@ -586,6 +821,11 @@ func buildCCChunk(text string) []byte {
 	return []byte(fmt.Sprintf(`data: {"id":"chatcmpl-cc","object":"chat.completion.chunk","created":0,"model":"commandcode","choices":[{"index":0,"delta":{"content":%s},"finish_reason":null}]}`, ccEncode(text)))
 }
 
+func buildCCToolCallChunk(index int, id, name, arguments string) []byte {
+	return []byte(fmt.Sprintf(`data: {"id":"chatcmpl-cc","object":"chat.completion.chunk","created":0,"model":"commandcode","choices":[{"index":0,"delta":{"tool_calls":[{"index":%d,"id":%s,"type":"function","function":{"name":%s,"arguments":%s}}]},"finish_reason":null}]}`,
+		index, ccEncode(id), ccEncode(name), ccEncode(arguments)))
+}
+
 func emitCommandCodeTranslatedStreamChunk(ctx context.Context, out chan<- cliproxyexecutor.StreamChunk, to, responseFormat sdktranslator.Format, model string, originalRequest, request, chunk []byte, param *any) {
 	chunks := sdktranslator.TranslateStream(ctx, to, responseFormat, model, originalRequest, request, chunk, param)
 	for _, c := range chunks {
@@ -597,10 +837,48 @@ func emitCommandCodeTranslatedStreamChunk(ctx context.Context, out chan<- clipro
 	}
 }
 
-func buildCCFinishChunk(promptTokens, completionTokens int64) []byte {
-	if promptTokens > 0 || completionTokens > 0 {
-		return []byte(fmt.Sprintf(`data: {"id":"chatcmpl-cc","object":"chat.completion.chunk","created":0,"model":"commandcode","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":%d,"completion_tokens":%d,"total_tokens":%d}}`,
-			promptTokens, completionTokens, promptTokens+completionTokens))
+func buildCCFinishChunk(promptTokens, completionTokens int64, finishReason string) []byte {
+	if finishReason == "" {
+		finishReason = "stop"
 	}
-	return []byte(`data: {"id":"chatcmpl-cc","object":"chat.completion.chunk","created":0,"model":"commandcode","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`)
+	if promptTokens > 0 || completionTokens > 0 {
+		return []byte(fmt.Sprintf(`data: {"id":"chatcmpl-cc","object":"chat.completion.chunk","created":0,"model":"commandcode","choices":[{"index":0,"delta":{},"finish_reason":%s}],"usage":{"prompt_tokens":%d,"completion_tokens":%d,"total_tokens":%d}}`,
+			ccEncode(finishReason), promptTokens, completionTokens, promptTokens+completionTokens))
+	}
+	return []byte(fmt.Sprintf(`data: {"id":"chatcmpl-cc","object":"chat.completion.chunk","created":0,"model":"commandcode","choices":[{"index":0,"delta":{},"finish_reason":%s}]}`, ccEncode(finishReason)))
+}
+
+func commandCodeToolArguments(line []byte) string {
+	for _, path := range []string{"input", "args", "arguments"} {
+		value := gjson.GetBytes(line, path)
+		if !value.Exists() {
+			continue
+		}
+		if value.Type == gjson.String {
+			raw := strings.TrimSpace(value.String())
+			if raw != "" {
+				return raw
+			}
+			return "{}"
+		}
+		if value.Raw != "" && value.Raw != "null" {
+			return value.Raw
+		}
+	}
+	return "{}"
+}
+
+func mapCommandCodeFinishReason(reason string, sawToolCall bool) string {
+	switch strings.TrimSpace(reason) {
+	case "tool-calls", "tool_calls", "toolUse":
+		return "tool_calls"
+	case "length", "max_tokens", "max-tokens", "max_output_tokens":
+		return "length"
+	case "content_filter":
+		return "content_filter"
+	}
+	if sawToolCall {
+		return "tool_calls"
+	}
+	return "stop"
 }
