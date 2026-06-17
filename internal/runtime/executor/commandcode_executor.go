@@ -491,7 +491,7 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 	if tools := convertToolsForCC(translated); tools != "[]" {
 		body, _ = sjson.SetRaw(body, "params.tools", tools)
 	}
-	if toolChoice := gjson.GetBytes(translated, "tool_choice"); toolChoice.Exists() {
+	if toolChoice := gjson.GetBytes(translated, "tool_choice"); toolChoice.Exists() && toolChoice.IsObject() {
 		body, _ = sjson.SetRaw(body, "params.tool_choice", toolChoice.Raw)
 	}
 	if parallelToolCalls := gjson.GetBytes(translated, "parallel_tool_calls"); parallelToolCalls.Exists() {
