@@ -11,6 +11,7 @@ import (
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
+	"github.com/tidwall/gjson"
 )
 
 func TestCommandCodeExecutor_ExecuteStream_CodexResponseFormat(t *testing.T) {
@@ -24,9 +25,9 @@ func TestCommandCodeExecutor_ExecuteStream_CodexResponseFormat(t *testing.T) {
 
 	exec := NewCommandCodeExecutor(&config.Config{})
 	auth := &cliproxyauth.Auth{
-		ID:       "test-auth",
-		Provider: "commandcode",
-		Metadata: map[string]any{"api_key": "test-key", "base_url": upstream.URL},
+		ID:         "test-auth",
+		Provider:   "commandcode",
+		Metadata:   map[string]any{"api_key": "test-key", "base_url": upstream.URL},
 		Attributes: map[string]string{"base_url": upstream.URL},
 	}
 
@@ -35,8 +36,8 @@ func TestCommandCodeExecutor_ExecuteStream_CodexResponseFormat(t *testing.T) {
 		Payload: []byte(`{"model":"deepseek-v4-pro","input":"hi","stream":true}`),
 	}
 	opts := cliproxyexecutor.Options{
-		Stream:         true,
-		SourceFormat:   sdktranslator.FromString("openai-response"),
+		Stream:          true,
+		SourceFormat:    sdktranslator.FromString("openai-response"),
 		OriginalRequest: req.Payload,
 	}
 
@@ -61,11 +62,17 @@ func TestCommandCodeExecutor_ExecuteStream_CodexResponseFormat(t *testing.T) {
 	joined := strings.Join(chunks, "\n")
 	t.Logf("Chunks: %s", joined)
 
-	// TranslateStream converts OpenAI SSE to source format. For openai-response,
-	// the translator produces response.created through response.output_item.done.
-	// response.completed depends on the handler's param state.
 	if !strings.Contains(joined, `"type":"response.output_item.done"`) {
 		t.Errorf("missing response.output_item.done\nGot:\n%s", joined)
+	}
+	if !strings.Contains(joined, `"type":"response.completed"`) {
+		t.Errorf("missing response.completed\nGot:\n%s", joined)
+	}
+	if !strings.Contains(joined, `"input_tokens":10`) {
+		t.Errorf("missing responses usage\nGot:\n%s", joined)
+	}
+	if !strings.Contains(joined, `"output_tokens":5`) {
+		t.Errorf("missing responses output usage\nGot:\n%s", joined)
 	}
 }
 
@@ -79,9 +86,9 @@ func TestCommandCodeExecutor_ExecuteStream_OpenAIFormat(t *testing.T) {
 
 	exec := NewCommandCodeExecutor(&config.Config{})
 	auth := &cliproxyauth.Auth{
-		ID:       "test-auth",
-		Provider: "commandcode",
-		Metadata: map[string]any{"api_key": "test-key", "base_url": upstream.URL},
+		ID:         "test-auth",
+		Provider:   "commandcode",
+		Metadata:   map[string]any{"api_key": "test-key", "base_url": upstream.URL},
 		Attributes: map[string]string{"base_url": upstream.URL},
 	}
 
@@ -90,8 +97,8 @@ func TestCommandCodeExecutor_ExecuteStream_OpenAIFormat(t *testing.T) {
 		Payload: []byte(`{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hi"}],"stream":true}`),
 	}
 	opts := cliproxyexecutor.Options{
-		Stream:         true,
-		SourceFormat:   sdktranslator.FromString("openai"),
+		Stream:          true,
+		SourceFormat:    sdktranslator.FromString("openai"),
 		OriginalRequest: req.Payload,
 	}
 
@@ -120,6 +127,94 @@ func TestCommandCodeExecutor_ExecuteStream_OpenAIFormat(t *testing.T) {
 	}
 	if !strings.Contains(joined, `"prompt_tokens":10`) {
 		t.Errorf("missing usage\nGot:\n%s", joined)
+	}
+}
+
+func TestCommandCodeExecutor_ExecuteStream_ClaudeFormat(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte(`{"type":"text-delta","text":"Hello"}` + "\n"))
+		w.Write([]byte(`{"type":"finish","totalUsage":{"inputTokens":10,"outputTokens":5}}` + "\n"))
+	}))
+	defer upstream.Close()
+
+	exec := NewCommandCodeExecutor(&config.Config{})
+	auth := &cliproxyauth.Auth{
+		ID:         "test-auth",
+		Provider:   "commandcode",
+		Metadata:   map[string]any{"api_key": "test-key", "base_url": upstream.URL},
+		Attributes: map[string]string{"base_url": upstream.URL},
+	}
+
+	req := cliproxyexecutor.Request{
+		Model:   "deepseek-v4-pro",
+		Payload: []byte(`{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hi"}],"stream":true,"max_tokens":16}`),
+	}
+	opts := cliproxyexecutor.Options{
+		Stream:          true,
+		SourceFormat:    sdktranslator.FromString("claude"),
+		OriginalRequest: req.Payload,
+	}
+
+	result, err := exec.ExecuteStream(context.Background(), auth, req, opts)
+	if err != nil {
+		t.Fatalf("ExecuteStream failed: %v", err)
+	}
+
+	var chunks []string
+	for ch := range result.Chunks {
+		if ch.Err != nil {
+			t.Fatalf("stream error: %v", ch.Err)
+		}
+		if ch.Payload != nil {
+			chunks = append(chunks, string(ch.Payload))
+		}
+	}
+
+	joined := strings.Join(chunks, "\n")
+	if !strings.Contains(joined, "event: content_block_delta") {
+		t.Errorf("missing Claude content delta\nGot:\n%s", joined)
+	}
+	if !strings.Contains(joined, "event: message_stop") {
+		t.Errorf("missing Claude message_stop\nGot:\n%s", joined)
+	}
+}
+
+func TestCommandCodeExecutor_Execute_NonStreamResponsesFormat(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"text":"Hello world","usage":{"input_tokens":10,"output_tokens":5}}`))
+	}))
+	defer upstream.Close()
+
+	exec := NewCommandCodeExecutor(&config.Config{})
+	auth := &cliproxyauth.Auth{
+		ID:         "test-auth",
+		Provider:   "commandcode",
+		Metadata:   map[string]any{"api_key": "test-key", "base_url": upstream.URL},
+		Attributes: map[string]string{"base_url": upstream.URL},
+	}
+
+	req := cliproxyexecutor.Request{
+		Model:   "deepseek-v4-pro",
+		Payload: []byte(`{"model":"deepseek-v4-pro","input":"hi"}`),
+	}
+	opts := cliproxyexecutor.Options{
+		SourceFormat:    sdktranslator.FromString("openai-response"),
+		ResponseFormat:  sdktranslator.FromString("openai-response"),
+		OriginalRequest: req.Payload,
+	}
+
+	result, err := exec.Execute(context.Background(), auth, req, opts)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	if got := gjson.GetBytes(result.Payload, "object").String(); got != "response" {
+		t.Fatalf("object = %q, want response; payload=%s", got, string(result.Payload))
+	}
+	if got := gjson.GetBytes(result.Payload, "output.0.content.0.text").String(); got != "Hello world" {
+		t.Fatalf("output text = %q, want Hello world; payload=%s", got, string(result.Payload))
 	}
 }
 
