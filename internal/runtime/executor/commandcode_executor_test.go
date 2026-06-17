@@ -369,9 +369,14 @@ func TestCommandCodeExecutor_buildRequestBody(t *testing.T) {
 			srcFormat: "openai",
 			contains: []string{
 				`"tools":[{"type":"function","name":"list_files","description":"List files","input_schema":{"type":"object","properties":{"path":{"type":"string"}}}}]`,
-				`"tool_choice":"auto"`,
 				`"parallel_tool_calls":true`,
 			},
+		},
+		{
+			name:      "object tool choice passed through",
+			payload:   `{"model":"test","messages":[{"role":"user","content":"inspect"}],"stream":true,"tools":[{"type":"function","function":{"name":"list_files","parameters":{"type":"object"}}}],"tool_choice":{"type":"function","function":{"name":"list_files"}}}`,
+			srcFormat: "openai",
+			contains:  []string{`"tool_choice":{"type":"function","function":{"name":"list_files"}}`},
 		},
 		{
 			name:      "tool history converted",
