@@ -445,7 +445,7 @@ func TestCommandCodeExecutor_injectHeaders_CLIpfingerprint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create request: %v", err)
 	}
-	exec.injectHeaders(httpReq, auth)
+	exec.injectHeaders(httpReq, auth, false)
 
 	// Verify x-* headers are stored in lowercase (not Go's Title-Case canonicalization).
 	// Note: Header.Get() canonicalizes the key, so we use bracket notation.
@@ -456,7 +456,7 @@ func TestCommandCodeExecutor_injectHeaders_CLIpfingerprint(t *testing.T) {
 		}
 		return vals[0]
 	}
-	for _, lowerKey := range []string{"x-cli-environment", "x-command-code-version", "x-session-id", "x-project-slug", "x-taste-learning", "x-co-flag", "traceparent", "accept", "accept-language"} {
+	for _, lowerKey := range []string{"x-cli-environment", "x-command-code-version", "x-session-id", "x-project-slug", "x-taste-learning", "x-co-flag", "traceparent", "accept", "accept-language", "accept-encoding"} {
 		if v := getLower(lowerKey); v == "" {
 			t.Errorf("missing required CLI header %q (lowercase)", lowerKey)
 		}
@@ -474,6 +474,10 @@ func TestCommandCodeExecutor_injectHeaders_CLIpfingerprint(t *testing.T) {
 	if got := getLower("x-co-flag"); got != "false" {
 		t.Errorf("x-co-flag = %q, want false", got)
 	}
+	// Non-stream requests should send full accept-encoding (matching undici).
+	if got := getLower("accept-encoding"); got != "gzip, deflate, br" {
+		t.Errorf("accept-encoding = %q, want \"gzip, deflate, br\"", got)
+	}
 	// Authorization uses Title-Case (matching official CLI), so Get() works.
 	if got := httpReq.Header.Get("Authorization"); got != "Bearer test-key" {
 		t.Errorf("Authorization = %q, want Bearer test-key", got)
@@ -489,4 +493,22 @@ func TestCommandCodeExecutor_injectHeaders_CLIpfingerprint(t *testing.T) {
 			t.Errorf("Title-Case header key %q should not exist (use lowercase)", titleKey)
 		}
 	}
+
+	// Stream requests should use accept-encoding: identity.
+	streamReq, errStream := http.NewRequest(http.MethodPost, "https://api.commandcode.ai/alpha/generate", nil)
+	if errStream != nil {
+		t.Fatalf("failed to create stream request: %v", errStream)
+	}
+	exec.injectHeaders(streamReq, auth, true)
+	if got := getLowerFromReq(streamReq, "accept-encoding"); got != "identity" {
+		t.Errorf("stream accept-encoding = %q, want identity", got)
+	}
+}
+
+func getLowerFromReq(req *http.Request, key string) string {
+	vals, ok := req.Header[key]
+	if !ok || len(vals) == 0 {
+		return ""
+	}
+	return vals[0]
 }
