@@ -132,8 +132,9 @@ func (t *utlsRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) 
 // utlsProtectedHosts contains the hosts that should use utls Chrome TLS fingerprint
 // to bypass Cloudflare's TLS fingerprinting.
 var utlsProtectedHosts = map[string]struct{}{
-	"api.anthropic.com": {},
-	"chatgpt.com":       {},
+	"api.anthropic.com":  {},
+	"chatgpt.com":        {},
+	"api.commandcode.ai": {},
 }
 
 // fallbackRoundTripper uses utls for protected HTTPS hosts and falls back to
