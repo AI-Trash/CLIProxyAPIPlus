@@ -18,8 +18,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/auth/gemini"
 	commandcodetoken "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/commandcode"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/auth/gemini"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/misc"
@@ -383,9 +383,9 @@ func DoCommandCodeImport(cfg *config.Config, nativePath string) {
 	}
 
 	var nativeAuth struct {
-		ApiKey       string `json:"apiKey"`
-		UserName     string `json:"userName"`
-		Anthropic    *struct {
+		ApiKey    string `json:"apiKey"`
+		UserName  string `json:"userName"`
+		Anthropic *struct {
 			Type    string `json:"type"`
 			Access  string `json:"access"`
 			Refresh string `json:"refresh"`
@@ -878,7 +878,8 @@ func validateCommandCodeAPIKey(apiKey string, _ *config.Config) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-command-code-version", "0.38.2")
+	req.Header.Set("x-cli-environment", "production")
+	req.Header.Set("x-command-code-version", "0.40.3")
 
 	resp, err := client.Do(req)
 	if err != nil {
