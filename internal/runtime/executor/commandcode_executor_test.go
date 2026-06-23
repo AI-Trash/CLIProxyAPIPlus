@@ -340,10 +340,11 @@ func TestCommandCodeExecutor_buildRequestBody(t *testing.T) {
 	exec := NewCommandCodeExecutor(&config.Config{})
 
 	tests := []struct {
-		name      string
-		payload   string
-		srcFormat string
-		contains  []string
+		name        string
+		payload     string
+		srcFormat   string
+		contains    []string
+		notContains []string
 	}{
 		{
 			name:      "basic openai request",
@@ -356,6 +357,13 @@ func TestCommandCodeExecutor_buildRequestBody(t *testing.T) {
 			payload:   `{"model":"test","messages":[{"role":"user","content":"hi"}],"stream":true}`,
 			srcFormat: "openai",
 			contains:  []string{`"workingDir"`, `"date"`, `"isGitRepo"`},
+		},
+		{
+			name:        "body shape matches official CLI",
+			payload:     `{"model":"test","messages":[{"role":"user","content":"hi"}],"stream":true}`,
+			srcFormat:   "openai",
+			contains:    []string{`"permissionMode":"standard"`, `Node.js`, `"tools":[]`, `"memory":null`, `"taste":null`, `"skills":null`},
+			notContains: []string{`"mode":"tool-desc"`, `"environment":"production"`, `"temperature"`},
 		},
 		{
 			name:      "responses input handled",
@@ -409,13 +417,76 @@ func TestCommandCodeExecutor_buildRequestBody(t *testing.T) {
 				Stream:       true,
 				SourceFormat: sdktranslator.FromString(tt.srcFormat),
 			}
-			body := exec.buildRequestBody(req, opts, true)
+			body := exec.buildRequestBody(req, opts, true, nil)
 			bodyStr := string(body)
 			for _, c := range tt.contains {
 				if !strings.Contains(bodyStr, c) {
 					t.Errorf("%s: missing %q\nGot: %s", tt.name, c, bodyStr)
 				}
 			}
+			for _, c := range tt.notContains {
+				if strings.Contains(bodyStr, c) {
+					t.Errorf("%s: unexpected %q\nGot: %s", tt.name, c, bodyStr)
+				}
+			}
 		})
+	}
+}
+
+func TestCommandCodeExecutor_injectHeaders_CLIpfingerprint(t *testing.T) {
+	exec := NewCommandCodeExecutor(&config.Config{})
+	auth := &cliproxyauth.Auth{
+		ID:         "test-auth",
+		Provider:   "commandcode",
+		Attributes: map[string]string{"api_key": "test-key"},
+	}
+
+	httpReq, err := http.NewRequest(http.MethodPost, "https://api.commandcode.ai/alpha/generate", nil)
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+	exec.injectHeaders(httpReq, auth)
+
+	// Verify x-* headers are stored in lowercase (not Go's Title-Case canonicalization).
+	// Note: Header.Get() canonicalizes the key, so we use bracket notation.
+	getLower := func(key string) string {
+		vals, ok := httpReq.Header[key]
+		if !ok || len(vals) == 0 {
+			return ""
+		}
+		return vals[0]
+	}
+	for _, lowerKey := range []string{"x-cli-environment", "x-command-code-version", "x-session-id", "x-project-slug", "x-taste-learning", "x-co-flag", "traceparent", "accept", "accept-language"} {
+		if v := getLower(lowerKey); v == "" {
+			t.Errorf("missing required CLI header %q (lowercase)", lowerKey)
+		}
+	}
+
+	if got := getLower("x-command-code-version"); got != "0.40.3" {
+		t.Errorf("x-command-code-version = %q, want 0.40.3", got)
+	}
+	if got := getLower("x-cli-environment"); got != "production" {
+		t.Errorf("x-cli-environment = %q, want production", got)
+	}
+	if got := getLower("x-taste-learning"); got != "true" {
+		t.Errorf("x-taste-learning = %q, want true", got)
+	}
+	if got := getLower("x-co-flag"); got != "false" {
+		t.Errorf("x-co-flag = %q, want false", got)
+	}
+	// Authorization uses Title-Case (matching official CLI), so Get() works.
+	if got := httpReq.Header.Get("Authorization"); got != "Bearer test-key" {
+		t.Errorf("Authorization = %q, want Bearer test-key", got)
+	}
+	// User-Agent must be suppressed (nil slice) so Go's transport omits it.
+	if got := httpReq.Header.Get("User-Agent"); got != "" {
+		t.Errorf("User-Agent = %q, want empty", got)
+	}
+
+	// Verify no Title-Case duplicates exist for the x-* headers.
+	for _, titleKey := range []string{"X-Cli-Environment", "X-Command-Code-Version", "X-Session-Id", "X-Project-Slug", "X-Taste-Learning", "X-Co-Flag", "Traceparent"} {
+		if _, ok := httpReq.Header[titleKey]; ok {
+			t.Errorf("Title-Case header key %q should not exist (use lowercase)", titleKey)
+		}
 	}
 }
