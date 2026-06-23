@@ -4,10 +4,13 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"runtime"
 	"strings"
 	"time"
 
@@ -26,9 +29,10 @@ import (
 
 const (
 	commandCodeDefaultBaseURL = "https://api.commandcode.ai"
-	commandCodeUserAgent      = "cli-proxy-commandcode"
 	ccHeaderProdEnv           = "production"
-	ccHeaderVersion           = "0.38.2"
+	ccHeaderVersion           = "0.40.3"
+	ccDefaultProjectSlug      = "workspace"
+	ccDefaultNodeVersion      = "v22.11.0"
 )
 
 // CommandCodeExecutor implements ProviderExecutor for the Command Code CLI's
@@ -64,20 +68,53 @@ func (e *CommandCodeExecutor) injectHeaders(req *http.Request, auth *cliproxyaut
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
-	req.Header.Set("x-cli-environment", ccHeaderProdEnv)
-	req.Header.Set("x-command-code-version", ccHeaderVersion)
+
+	// undici (Node's fetch) auto-adds these lowercase default headers to every
+	// request. Go's transport does not send them, so add them explicitly.
+	ccSetLowerHeader(req, "accept", "*/*")
+	ccSetLowerHeader(req, "accept-language", "*")
+
+	// CLI fingerprint headers — the official CLI sets these in lowercase.
+	// Go's Header.Set() canonicalizes to Title-Case (e.g. "X-Cli-Environment"),
+	// which is a detectable difference over HTTP/1.1. Use bracket notation to
+	// preserve the exact lowercase casing.
+	ccSetLowerHeader(req, "x-cli-environment", ccHeaderProdEnv)
+	ccSetLowerHeader(req, "x-command-code-version", ccHeaderVersion)
+	ccSetLowerHeader(req, "x-session-id", uuid.New().String())
+	ccSetLowerHeader(req, "x-project-slug", e.resolveString(auth, "project_slug", ccDefaultProjectSlug))
+	ccSetLowerHeader(req, "x-taste-learning", e.resolveString(auth, "taste_learning", "true"))
+	ccSetLowerHeader(req, "x-co-flag", "false")
+	if tp := ccGenerateTraceparent(); tp != "" {
+		ccSetLowerHeader(req, "traceparent", tp)
+	}
+
+	// The official CLI uses Node's fetch (undici) which does not send a
+	// User-Agent header. Suppress Go's default "Go-http-client/1.1" by setting
+	// the key to a nil slice — Go's transport sees the key exists and skips its
+	// default, while WriteSubset iterates zero values so nothing is emitted.
+	req.Header["User-Agent"] = nil
 
 	if auth != nil && auth.Metadata != nil {
 		if tok, ok := auth.Metadata["oauth_token"].(string); ok && tok != "" {
-			req.Header.Set("x-oauth-token", "Bearer "+tok)
+			ccSetLowerHeader(req, "x-oauth-token", "Bearer "+tok)
 		}
 		if prov, ok := auth.Metadata["oauth_provider"].(string); ok && prov != "" {
-			req.Header.Set("x-oauth-provider", prov)
+			ccSetLowerHeader(req, "x-oauth-provider", prov)
 		}
 	}
 	if auth != nil {
 		util.ApplyCustomHeadersFromAttrs(req, auth.Attributes)
 	}
+}
+
+// ccSetLowerHeader sets a header using exact (lowercase) key casing, bypassing
+// Go's automatic canonicalization to Title-Case. This is necessary because the
+// command-code CLI sends headers in lowercase (via Node's fetch/undici), and
+// the difference is detectable over HTTP/1.1.
+func ccSetLowerHeader(req *http.Request, key, value string) {
+	// Delete any canonicalized variant first to avoid duplicate keys.
+	req.Header.Del(key)
+	req.Header[key] = []string{value}
 }
 
 func (e *CommandCodeExecutor) resolveAPIKey(auth *cliproxyauth.Auth) string {
@@ -113,6 +150,91 @@ func (e *CommandCodeExecutor) resolveBaseURL(auth *cliproxyauth.Auth) string {
 	return commandCodeDefaultBaseURL
 }
 
+// resolveString resolves a string value from auth attributes/metadata with a
+// fallback default. Attributes take priority over metadata.
+func (e *CommandCodeExecutor) resolveString(auth *cliproxyauth.Auth, key, fallback string) string {
+	if auth != nil {
+		if auth.Attributes != nil {
+			if v := strings.TrimSpace(auth.Attributes[key]); v != "" {
+				return v
+			}
+		}
+		if auth.Metadata != nil {
+			if v, ok := auth.Metadata[key].(string); ok {
+				if v = strings.TrimSpace(v); v != "" {
+					return v
+				}
+			}
+		}
+	}
+	return fallback
+}
+
+// ccEnvironmentString builds the "config.environment" value the official CLI
+// sends: "<platform>-<arch>, Node.js <version>". This is distinct from the
+// x-cli-environment header (which is "production"). The value is overridable
+// via auth metadata/attributes "environment".
+func (e *CommandCodeExecutor) ccEnvironmentString(auth *cliproxyauth.Auth) string {
+	if env := e.resolveString(auth, "environment", ""); env != "" {
+		return env
+	}
+	nodeVer := e.resolveString(auth, "node_version", ccDefaultNodeVersion)
+	return fmt.Sprintf("%s-%s, Node.js %s", ccNodePlatform(), ccNodeArch(), nodeVer)
+}
+
+func ccNodePlatform() string {
+	switch runtime.GOOS {
+	case "windows":
+		return "win32"
+	case "darwin":
+		return "darwin"
+	case "linux":
+		return "linux"
+	default:
+		return runtime.GOOS
+	}
+}
+
+func ccNodeArch() string {
+	switch runtime.GOARCH {
+	case "amd64":
+		return "x64"
+	case "arm64":
+		return "arm64"
+	case "386":
+		return "ia32"
+	default:
+		return runtime.GOARCH
+	}
+}
+
+// ccGenerateTraceparent generates a valid W3C Trace Context "traceparent"
+// header value (00-<32hex traceId>-<16hex spanId>-01) that the official CLI's
+// OpenTelemetry instrumentation attaches to every request.
+func ccGenerateTraceparent() string {
+	var traceBuf [16]byte
+	var spanBuf [8]byte
+	if _, err := rand.Read(traceBuf[:]); err != nil {
+		return ""
+	}
+	if _, err := rand.Read(spanBuf[:]); err != nil {
+		return ""
+	}
+	// traceId and spanId must not be all-zero per W3C spec.
+	allZero := func(b []byte) bool {
+		for _, v := range b {
+			if v != 0 {
+				return false
+			}
+		}
+		return true
+	}
+	if allZero(traceBuf[:]) || allZero(spanBuf[:]) {
+		return ""
+	}
+	return fmt.Sprintf("00-%s-%s-01", hex.EncodeToString(traceBuf[:]), hex.EncodeToString(spanBuf[:]))
+}
+
 // Execute performs a non-streaming request via /alpha/generate.
 func (e *CommandCodeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (resp cliproxyexecutor.Response, err error) {
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
@@ -126,7 +248,7 @@ func (e *CommandCodeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Au
 		return
 	}
 
-	ccBody := e.buildRequestBody(req, opts, false)
+	ccBody := e.buildRequestBody(req, opts, false, auth)
 
 	httpReq, err := e.buildHTTPRequest(ctx, baseURL, "/alpha/generate", apiKey, ccBody, auth)
 	if err != nil {
@@ -191,14 +313,12 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 		return nil, err
 	}
 
-	ccBody := e.buildRequestBody(req, opts, true)
+	ccBody := e.buildRequestBody(req, opts, true, auth)
 
 	httpReq, err := e.buildHTTPRequest(ctx, baseURL, "/alpha/generate", apiKey, ccBody, auth)
 	if err != nil {
 		return nil, err
 	}
-	httpReq.Header.Set("Accept", "text/event-stream")
-	httpReq.Header.Set("Cache-Control", "no-cache")
 
 	httpClient := newProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
 	httpResp, err := httpClient.Do(httpReq)
@@ -430,7 +550,7 @@ func (e *CommandCodeExecutor) buildHTTPRequest(ctx context.Context, baseURL, end
 	return httpReq, nil
 }
 
-func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opts cliproxyexecutor.Options, stream bool) []byte {
+func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opts cliproxyexecutor.Options, stream bool, auth *cliproxyauth.Auth) []byte {
 	payload := req.Payload
 	model := req.Model
 
@@ -463,11 +583,6 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 		maxTokens = 64000
 	}
 
-	temperature := gjson.GetBytes(translated, "temperature").Float()
-	if temperature == 0 {
-		temperature = 0.3
-	}
-
 	// System prompt from translation takes priority; fall back to instructions
 	if sysPrompt == "" {
 		sysPrompt = gjson.GetBytes(translated, "system").String()
@@ -476,12 +591,21 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 		sysPrompt = gjson.GetBytes(payload, "instructions").String()
 	}
 
-	params := fmt.Sprintf(`"model":%s,"messages":%s,"max_tokens":%d,"temperature":%f,"stream":%v`,
-		ccEncode(model), messages, maxTokens, temperature, stream)
+	// Params mirror the official CLI's callServerAPI: model, messages, tools,
+	// system, max_tokens, stream. Note: temperature is intentionally omitted
+	// (the main agent flow does not send it; only the legacy callApi path does).
+	params := fmt.Sprintf(`"model":%s,"messages":%s,"tools":%s,"max_tokens":%d,"stream":%v`,
+		ccEncode(model), messages, convertToolsForCC(translated), maxTokens, stream)
 
+	// Body shape mirrors the official command-code CLI's callServerAPI request:
+	// no "mode" field for regular chat, permissionMode present, and
+	// config.environment is the OS/Node.js info string (NOT "production", which
+	// is the x-cli-environment header value instead). memory/taste/skills use
+	// JSON null (not empty string) when absent, matching the `??null` pattern.
+	envInfo := e.ccEnvironmentString(auth)
 	body := fmt.Sprintf(
-		`{"params":{%s},"mode":"tool-desc","config":{"environment":"production","workingDir":"/workspace","date":"%s","structure":[],"isGitRepo":false,"currentBranch":"","mainBranch":"","gitStatus":"","recentCommits":[]},"memory":"","taste":"","skills":""}`,
-		params, time.Now().UTC().Format("2006-01-02"))
+		`{"params":{%s},"permissionMode":"standard","config":{"environment":%s,"workingDir":"/workspace","date":"%s","structure":[],"isGitRepo":false,"currentBranch":"","mainBranch":"","gitStatus":"","recentCommits":[]},"memory":null,"taste":null,"skills":null}`,
+		params, ccEncode(envInfo), time.Now().UTC().Format("2006-01-02"))
 
 	if sysPrompt != "" {
 		body, _ = sjson.Set(body, "params.system", sysPrompt)
@@ -489,9 +613,6 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 
 	if cfg := gjson.GetBytes(translated, "reasoning_effort"); cfg.Exists() {
 		body, _ = sjson.Set(body, "params.reasoning_effort", cfg.Value())
-	}
-	if tools := convertToolsForCC(translated); tools != "[]" {
-		body, _ = sjson.SetRaw(body, "params.tools", tools)
 	}
 	if toolChoice := gjson.GetBytes(translated, "tool_choice"); toolChoice.Exists() && toolChoice.IsObject() {
 		body, _ = sjson.SetRaw(body, "params.tool_choice", toolChoice.Raw)
