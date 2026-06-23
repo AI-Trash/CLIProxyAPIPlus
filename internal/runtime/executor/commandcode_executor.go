@@ -3,6 +3,8 @@ package executor
 import (
 	"bufio"
 	"bytes"
+	"compress/flate"
+	"compress/gzip"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -14,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/andybalholm/brotli"
 	"github.com/google/uuid"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
@@ -58,12 +61,12 @@ func (e *CommandCodeExecutor) HttpRequest(ctx context.Context, auth *cliproxyaut
 		ctx = req.Context()
 	}
 	httpReq := req.WithContext(ctx)
-	e.injectHeaders(httpReq, auth)
-	httpClient := newProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
+	e.injectHeaders(httpReq, auth, false)
+	httpClient := newUtlsHTTPClient(ctx, e.cfg, auth, 0)
 	return httpClient.Do(httpReq)
 }
 
-func (e *CommandCodeExecutor) injectHeaders(req *http.Request, auth *cliproxyauth.Auth) {
+func (e *CommandCodeExecutor) injectHeaders(req *http.Request, auth *cliproxyauth.Auth, stream bool) {
 	apiKey := e.resolveAPIKey(auth)
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
@@ -71,13 +74,21 @@ func (e *CommandCodeExecutor) injectHeaders(req *http.Request, auth *cliproxyaut
 
 	// undici (Node's fetch) auto-adds these lowercase default headers to every
 	// request. Go's transport does not send them, so add them explicitly.
+	// Under HTTP/2 (used by the uTLS transport), all headers are sent lowercase
+	// automatically, but we set them lowercase here for HTTP/1.1 fallback too.
 	ccSetLowerHeader(req, "accept", "*/*")
 	ccSetLowerHeader(req, "accept-language", "*")
 
+	// Accept-Encoding: streams must use "identity" because the line scanner
+	// cannot parse compressed bytes. Non-stream requests send the same value
+	// as undici's default to match the CLI fingerprint.
+	if stream {
+		ccSetLowerHeader(req, "accept-encoding", "identity")
+	} else {
+		ccSetLowerHeader(req, "accept-encoding", "gzip, deflate, br")
+	}
+
 	// CLI fingerprint headers — the official CLI sets these in lowercase.
-	// Go's Header.Set() canonicalizes to Title-Case (e.g. "X-Cli-Environment"),
-	// which is a detectable difference over HTTP/1.1. Use bracket notation to
-	// preserve the exact lowercase casing.
 	ccSetLowerHeader(req, "x-cli-environment", ccHeaderProdEnv)
 	ccSetLowerHeader(req, "x-command-code-version", ccHeaderVersion)
 	ccSetLowerHeader(req, "x-session-id", uuid.New().String())
@@ -250,12 +261,12 @@ func (e *CommandCodeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Au
 
 	ccBody := e.buildRequestBody(req, opts, false, auth)
 
-	httpReq, err := e.buildHTTPRequest(ctx, baseURL, "/alpha/generate", apiKey, ccBody, auth)
+	httpReq, err := e.buildHTTPRequest(ctx, baseURL, "/alpha/generate", apiKey, ccBody, auth, false)
 	if err != nil {
 		return resp, err
 	}
 
-	httpClient := newProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
+	httpClient := newUtlsHTTPClient(ctx, e.cfg, auth, 0)
 	httpResp, err := httpClient.Do(httpReq)
 	if err != nil {
 		recordAPIResponseError(ctx, e.cfg, err)
@@ -263,6 +274,18 @@ func (e *CommandCodeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Au
 	}
 	defer httpResp.Body.Close()
 	recordAPIResponseMetadata(ctx, e.cfg, httpResp.StatusCode, httpResp.Header.Clone())
+
+	// Decompress the response body if the upstream sent compressed content
+	// (we requested gzip/deflate/br for non-stream requests to match undici).
+	decompressedBody, errDecomp := ccDecompressBody(httpResp.Body, httpResp.Header.Get("Content-Encoding"))
+	if errDecomp != nil {
+		recordAPIResponseError(ctx, e.cfg, errDecomp)
+		err = errDecomp
+		return
+	}
+	httpResp.Body = io.NopCloser(bytes.NewReader(decompressedBody))
+	httpResp.Header.Del("Content-Encoding")
+	httpResp.Header.Del("Content-Length")
 
 	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
 		b, _ := io.ReadAll(httpResp.Body)
@@ -315,12 +338,12 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 
 	ccBody := e.buildRequestBody(req, opts, true, auth)
 
-	httpReq, err := e.buildHTTPRequest(ctx, baseURL, "/alpha/generate", apiKey, ccBody, auth)
+	httpReq, err := e.buildHTTPRequest(ctx, baseURL, "/alpha/generate", apiKey, ccBody, auth, true)
 	if err != nil {
 		return nil, err
 	}
 
-	httpClient := newProxyAwareHTTPClient(ctx, e.cfg, auth, 0)
+	httpClient := newUtlsHTTPClient(ctx, e.cfg, auth, 0)
 	httpResp, err := httpClient.Do(httpReq)
 	if err != nil {
 		recordAPIResponseError(ctx, e.cfg, err)
@@ -521,14 +544,14 @@ func (e *CommandCodeExecutor) Refresh(ctx context.Context, auth *cliproxyauth.Au
 
 // --- internal helpers ---
 
-func (e *CommandCodeExecutor) buildHTTPRequest(ctx context.Context, baseURL, endpoint, apiKey string, body []byte, auth *cliproxyauth.Auth) (*http.Request, error) {
+func (e *CommandCodeExecutor) buildHTTPRequest(ctx context.Context, baseURL, endpoint, apiKey string, body []byte, auth *cliproxyauth.Auth, stream bool) (*http.Request, error) {
 	url := strings.TrimSuffix(baseURL, "/") + endpoint
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	e.injectHeaders(httpReq, auth)
+	e.injectHeaders(httpReq, auth, stream)
 
 	var authID, authLabel, authType, authValue string
 	if auth != nil {
@@ -632,6 +655,31 @@ func summary(s []byte, n int) string {
 		return string(s)
 	}
 	return string(s[:n]) + "..."
+}
+
+// ccDecompressBody decompresses an HTTP response body based on the
+// Content-Encoding header. Supports gzip, deflate, and brotli (br).
+// If encoding is empty or "identity", the body is returned as-is.
+func ccDecompressBody(r io.Reader, encoding string) ([]byte, error) {
+	switch strings.ToLower(strings.TrimSpace(encoding)) {
+	case "", "identity":
+		return io.ReadAll(r)
+	case "gzip":
+		gz, errGz := gzip.NewReader(r)
+		if errGz != nil {
+			return nil, fmt.Errorf("commandcode: gzip decompress init failed: %w", errGz)
+		}
+		defer gz.Close()
+		return io.ReadAll(gz)
+	case "deflate":
+		fl := flate.NewReader(r)
+		defer fl.Close()
+		return io.ReadAll(fl)
+	case "br":
+		return io.ReadAll(brotli.NewReader(r))
+	default:
+		return io.ReadAll(r)
+	}
 }
 
 // convertMessagesForCC converts OpenAI-format messages to command-code format:

@@ -18,6 +18,13 @@ func newProxyAwareHTTPClient(ctx context.Context, cfg *config.Config, auth *clip
 	return helps.NewProxyAwareHTTPClient(ctx, cfg, auth, timeout)
 }
 
+// newUtlsHTTPClient creates an HTTP client that uses uTLS (Chrome TLS fingerprint)
+// for protected hosts. This is used by executors whose upstream provider performs
+// TLS fingerprinting to detect non-CLI clients (e.g. commandcode).
+func newUtlsHTTPClient(ctx context.Context, cfg *config.Config, auth *cliproxyauth.Auth, timeout time.Duration) *http.Client {
+	return helps.NewUtlsHTTPClient(ctx, cfg, auth, timeout)
+}
+
 func parseOpenAIUsage(data []byte) usage.Detail {
 	return helps.ParseOpenAIUsage(data)
 }
