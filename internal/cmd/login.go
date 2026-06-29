@@ -879,7 +879,7 @@ func validateCommandCodeAPIKey(apiKey string, _ *config.Config) error {
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-cli-environment", "production")
-	req.Header.Set("x-command-code-version", "0.40.3")
+	req.Header.Set("x-command-code-version", "0.40.11")
 
 	resp, err := client.Do(req)
 	if err != nil {
