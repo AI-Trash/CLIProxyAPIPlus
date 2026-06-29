@@ -300,8 +300,11 @@ func TestCommandCodeExecutor_ExecuteStream_ClaudeFormat(t *testing.T) {
 
 func TestCommandCodeExecutor_Execute_NonStreamResponsesFormat(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"text":"Hello world","usage":{"input_tokens":10,"output_tokens":5}}`))
+		// /alpha/generate is streaming-only; Execute() always opens a streaming
+		// request and aggregates events internally.
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte(`{"type":"text-delta","text":"Hello world"}` + "\n"))
+		w.Write([]byte(`{"type":"finish","totalUsage":{"inputTokens":10,"outputTokens":5,"totalTokens":15}}` + "\n"))
 	}))
 	defer upstream.Close()
 
@@ -417,7 +420,7 @@ func TestCommandCodeExecutor_buildRequestBody(t *testing.T) {
 				Stream:       true,
 				SourceFormat: sdktranslator.FromString(tt.srcFormat),
 			}
-			body := exec.buildRequestBody(req, opts, true, nil)
+			body := exec.buildRequestBody(req, opts, nil)
 			bodyStr := string(body)
 			for _, c := range tt.contains {
 				if !strings.Contains(bodyStr, c) {
@@ -462,8 +465,8 @@ func TestCommandCodeExecutor_injectHeaders_CLIpfingerprint(t *testing.T) {
 		}
 	}
 
-	if got := getLower("x-command-code-version"); got != "0.40.3" {
-		t.Errorf("x-command-code-version = %q, want 0.40.3", got)
+	if got := getLower("x-command-code-version"); got != "0.40.11" {
+		t.Errorf("x-command-code-version = %q, want 0.40.11", got)
 	}
 	if got := getLower("x-cli-environment"); got != "production" {
 		t.Errorf("x-cli-environment = %q, want production", got)
@@ -482,12 +485,15 @@ func TestCommandCodeExecutor_injectHeaders_CLIpfingerprint(t *testing.T) {
 	if got := httpReq.Header.Get("Authorization"); got != "Bearer test-key" {
 		t.Errorf("Authorization = %q, want Bearer test-key", got)
 	}
-	// User-Agent must be suppressed (nil slice) so Go's transport omits it.
-	if got := httpReq.Header.Get("User-Agent"); got != "" {
-		t.Errorf("User-Agent = %q, want empty", got)
+	// User-Agent must match the official CLI (lowercase "cli") to avoid the
+	// server-side "Proxy use detected" rejection.
+	if got := getLower("User-Agent"); got != "cli" {
+		t.Errorf("User-Agent = %q, want cli", got)
 	}
 
 	// Verify no Title-Case duplicates exist for the x-* headers.
+	// (User-Agent's canonical form is itself "User-Agent" with caps, so it is
+	// always present and excluded from this check.)
 	for _, titleKey := range []string{"X-Cli-Environment", "X-Command-Code-Version", "X-Session-Id", "X-Project-Slug", "X-Taste-Learning", "X-Co-Flag", "Traceparent"} {
 		if _, ok := httpReq.Header[titleKey]; ok {
 			t.Errorf("Title-Case header key %q should not exist (use lowercase)", titleKey)

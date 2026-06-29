@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -33,9 +34,10 @@ import (
 const (
 	commandCodeDefaultBaseURL = "https://api.commandcode.ai"
 	ccHeaderProdEnv           = "production"
-	ccHeaderVersion           = "0.40.3"
+	ccHeaderVersion           = "0.40.11"
 	ccDefaultProjectSlug      = "workspace"
 	ccDefaultNodeVersion      = "v22.11.0"
+	ccUserAgent               = "cli"
 )
 
 // CommandCodeExecutor implements ProviderExecutor for the Command Code CLI's
@@ -99,11 +101,11 @@ func (e *CommandCodeExecutor) injectHeaders(req *http.Request, auth *cliproxyaut
 		ccSetLowerHeader(req, "traceparent", tp)
 	}
 
-	// The official CLI uses Node's fetch (undici) which does not send a
-	// User-Agent header. Suppress Go's default "Go-http-client/1.1" by setting
-	// the key to a nil slice — Go's transport sees the key exists and skips its
-	// default, while WriteSubset iterates zero values so nothing is emitted.
-	req.Header["User-Agent"] = nil
+	// The official command-code CLI (>=0.40.x) explicitly attaches
+	// "User-Agent: cli" to every request via Node's fetch (undici).
+	// Go's transport would otherwise emit "Go-http-client/1.1" which is a
+	// strong proxy signal. We must send the literal "cli" string.
+	ccSetLowerHeader(req, "User-Agent", ccUserAgent)
 
 	if auth != nil && auth.Metadata != nil {
 		if tok, ok := auth.Metadata["oauth_token"].(string); ok && tok != "" {
@@ -247,6 +249,14 @@ func ccGenerateTraceparent() string {
 }
 
 // Execute performs a non-streaming request via /alpha/generate.
+//
+// The command-code API endpoint (/alpha/generate) is a server-side streaming
+// endpoint. The official CLI always sends "stream":true and consumes the
+// line-delimited JSON event stream. Sending "stream":false is detected as a
+// proxy signal and rejected with "Proxy use detected. This endpoint only
+// serves CLI." Therefore even when the caller wants a non-streaming response
+// we must open a streaming request, accumulate events internally, and only
+// then translate the assembled message into the requested format.
 func (e *CommandCodeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (resp cliproxyexecutor.Response, err error) {
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
 	reporter := newUsageReporter(ctx, e.Identifier(), baseModel, auth)
@@ -259,9 +269,10 @@ func (e *CommandCodeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Au
 		return
 	}
 
-	ccBody := e.buildRequestBody(req, opts, false, auth)
+	// Always stream upstream — see function comment. We aggregate below.
+	ccBody := e.buildRequestBody(req, opts, auth)
 
-	httpReq, err := e.buildHTTPRequest(ctx, baseURL, "/alpha/generate", apiKey, ccBody, auth, false)
+	httpReq, err := e.buildHTTPRequest(ctx, baseURL, "/alpha/generate", apiKey, ccBody, auth, true)
 	if err != nil {
 		return resp, err
 	}
@@ -275,18 +286,6 @@ func (e *CommandCodeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Au
 	defer httpResp.Body.Close()
 	recordAPIResponseMetadata(ctx, e.cfg, httpResp.StatusCode, httpResp.Header.Clone())
 
-	// Decompress the response body if the upstream sent compressed content
-	// (we requested gzip/deflate/br for non-stream requests to match undici).
-	decompressedBody, errDecomp := ccDecompressBody(httpResp.Body, httpResp.Header.Get("Content-Encoding"))
-	if errDecomp != nil {
-		recordAPIResponseError(ctx, e.cfg, errDecomp)
-		err = errDecomp
-		return
-	}
-	httpResp.Body = io.NopCloser(bytes.NewReader(decompressedBody))
-	httpResp.Header.Del("Content-Encoding")
-	httpResp.Header.Del("Content-Length")
-
 	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
 		b, _ := io.ReadAll(httpResp.Body)
 		appendAPIResponseChunk(ctx, e.cfg, b)
@@ -295,18 +294,21 @@ func (e *CommandCodeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Au
 		return
 	}
 
-	body, err := io.ReadAll(httpResp.Body)
-	if err != nil {
-		recordAPIResponseError(ctx, e.cfg, err)
-		return resp, err
+	openAIResp, detail, finishReason, errAgg := e.aggregateStreamToOpenAI(ctx, httpResp.Body)
+	if errAgg != nil {
+		if errors.Is(errAgg, errStreamAborted) {
+			reporter.publishFailure(ctx)
+		}
+		recordAPIResponseError(ctx, e.cfg, errAgg)
+		err = errAgg
+		return
 	}
-	appendAPIResponseChunk(ctx, e.cfg, body)
-
-	openAIResp, detail := e.convertNonStreamToOpenAI(body)
 	if detail.TotalTokens > 0 || detail.InputTokens > 0 || detail.OutputTokens > 0 {
 		reporter.publish(ctx, detail)
 	}
 	reporter.ensurePublished(ctx)
+
+	_ = finishReason // finishReason is reflected inside openAIResp via TranslateNonStream
 
 	from := opts.SourceFormat
 	responseFormat := cliproxyexecutor.ResponseFormatOrSource(opts)
@@ -336,7 +338,8 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 		return nil, err
 	}
 
-	ccBody := e.buildRequestBody(req, opts, true, auth)
+	// Always stream upstream — /alpha/generate is streaming-only.
+	ccBody := e.buildRequestBody(req, opts, auth)
 
 	httpReq, err := e.buildHTTPRequest(ctx, baseURL, "/alpha/generate", apiKey, ccBody, auth, true)
 	if err != nil {
@@ -573,7 +576,7 @@ func (e *CommandCodeExecutor) buildHTTPRequest(ctx context.Context, baseURL, end
 	return httpReq, nil
 }
 
-func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opts cliproxyexecutor.Options, stream bool, auth *cliproxyauth.Auth) []byte {
+func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opts cliproxyexecutor.Options, auth *cliproxyauth.Auth) []byte {
 	payload := req.Payload
 	model := req.Model
 
@@ -581,7 +584,7 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 	// OpenAI format — this properly resolves content nesting.
 	from := opts.SourceFormat
 	to := sdktranslator.FromString("openai")
-	translated := sdktranslator.TranslateRequest(from, to, model, payload, stream)
+	translated := sdktranslator.TranslateRequest(from, to, model, payload, true)
 
 	// Command-code expects: content as array-of-blocks, system in params.system
 	messages, sysPrompt := convertMessagesForCC(translated)
@@ -615,10 +618,11 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 	}
 
 	// Params mirror the official CLI's callServerAPI: model, messages, tools,
-	// system, max_tokens, stream. Note: temperature is intentionally omitted
-	// (the main agent flow does not send it; only the legacy callApi path does).
-	params := fmt.Sprintf(`"model":%s,"messages":%s,"tools":%s,"max_tokens":%d,"stream":%v`,
-		ccEncode(model), messages, convertToolsForCC(translated), maxTokens, stream)
+	// system, max_tokens, stream. The CLI ALWAYS sends "stream":true — the
+	// /alpha/generate endpoint is a streaming endpoint and "stream":false is
+	// detected as a proxy signal.
+	params := fmt.Sprintf(`"model":%s,"messages":%s,"tools":%s,"max_tokens":%d,"stream":true`,
+		ccEncode(model), messages, convertToolsForCC(translated), maxTokens)
 
 	// Body shape mirrors the official command-code CLI's callServerAPI request:
 	// no "mode" field for regular chat, permissionMode present, and
@@ -1052,4 +1056,160 @@ func mapCommandCodeFinishReason(reason string, sawToolCall bool) string {
 		return "tool_calls"
 	}
 	return "stop"
+}
+
+// errStreamAborted is the sentinel returned when the command-code stream is
+// explicitly aborted by the upstream ("abort" event).
+var errStreamAborted = errors.New("commandcode: stream aborted")
+
+// aggregateStreamToOpenAI consumes the line-delimited JSON event stream
+// emitted by /alpha/generate and assembles a single OpenAI chat-completion
+// non-streaming response. This is used by Execute to translate a streaming
+// upstream reply into a non-streaming payload for callers that expect it.
+//
+// The returned finishReason is also surfaced via the OpenAI response's
+// "choices[0].finish_reason" field. The usage detail mirrors the data
+// reported by the upstream "finish" event.
+func (e *CommandCodeExecutor) aggregateStreamToOpenAI(ctx context.Context, body io.Reader) ([]byte, usage.Detail, string, error) {
+	var (
+		accText          strings.Builder
+		toolCalls        []map[string]any
+		promptTokens     int64
+		completionTokens int64
+		cachedTokens     int64
+		finished         bool
+		sawToolCall      bool
+		finishReason     string
+		abortErr         error
+	)
+
+	scanner := bufio.NewScanner(body)
+	scanner.Buffer(nil, 52_428_800)
+
+	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		appendAPIResponseChunk(ctx, e.cfg, line)
+		if len(line) == 0 {
+			continue
+		}
+		if bytes.HasPrefix(line, []byte("data:")) {
+			line = bytes.TrimSpace(line[5:])
+		}
+
+		chunkType := gjson.GetBytes(line, "type").String()
+		switch chunkType {
+		case "text-delta":
+			if text := gjson.GetBytes(line, "text").String(); text != "" {
+				accText.WriteString(text)
+			}
+
+		case "tool-call":
+			sawToolCall = true
+			id := gjson.GetBytes(line, "toolCallId").String()
+			if id == "" {
+				id = gjson.GetBytes(line, "id").String()
+			}
+			name := gjson.GetBytes(line, "toolName").String()
+			if name == "" {
+				name = gjson.GetBytes(line, "name").String()
+			}
+			if name == "" {
+				log.Debugf("commandcode: aggregate skipping tool-call with empty name")
+				continue
+			}
+			arguments := commandCodeToolArguments(line)
+			toolCalls = append(toolCalls, map[string]any{
+				"id":   id,
+				"type": "function",
+				"function": map[string]any{
+					"name":      name,
+					"arguments": arguments,
+				},
+			})
+
+		case "finish":
+			finished = true
+			if usageNode := gjson.GetBytes(line, "totalUsage"); usageNode.Exists() {
+				promptTokens = usageNode.Get("inputTokens").Int()
+				completionTokens = usageNode.Get("outputTokens").Int()
+				if cached := usageNode.Get("inputTokenDetails.cacheReadTokens"); cached.Exists() {
+					cachedTokens = cached.Int()
+				}
+			}
+			finishReason = mapCommandCodeFinishReason(gjson.GetBytes(line, "finishReason").String(), sawToolCall)
+
+		case "error":
+			msg := gjson.GetBytes(line, "error.message").String()
+			if msg == "" {
+				msg = gjson.GetBytes(line, "error").String()
+			}
+			if msg == "" {
+				msg = "stream error"
+			}
+			return nil, usage.Detail{}, "", fmt.Errorf("%s", msg)
+
+		case "abort":
+			abortErr = errStreamAborted
+
+		default:
+			// reasoning/tool events — skip
+		}
+	}
+
+	if errScan := scanner.Err(); errScan != nil {
+		return nil, usage.Detail{}, "", errScan
+	}
+	if abortErr != nil {
+		return nil, usage.Detail{}, "", abortErr
+	}
+	if !finished {
+		log.Warnf("[commandcode] non-stream aggregate ended without finish event")
+		finishReason = mapCommandCodeFinishReason("", sawToolCall)
+	}
+
+	detail := usage.Detail{
+		InputTokens:  promptTokens,
+		OutputTokens: completionTokens,
+		CachedTokens: cachedTokens,
+	}
+	detail.TotalTokens = detail.InputTokens + detail.OutputTokens
+	if detail.TotalTokens == 0 {
+		detail.TotalTokens = promptTokens + completionTokens
+	}
+
+	message := map[string]any{
+		"role":    "assistant",
+		"content": accText.String(),
+	}
+	if len(toolCalls) > 0 {
+		message["tool_calls"] = toolCalls
+	}
+
+	resp := map[string]any{
+		"id":      "chatcmpl-" + strings.ReplaceAll(uuid.New().String(), "-", ""),
+		"object":  "chat.completion",
+		"created": 0,
+		"model":   "commandcode",
+		"choices": []any{
+			map[string]any{
+				"index":         0,
+				"message":       message,
+				"finish_reason": finishReason,
+			},
+		},
+	}
+	if detail.TotalTokens > 0 || detail.InputTokens > 0 || detail.OutputTokens > 0 {
+		resp["usage"] = map[string]any{
+			"prompt_tokens":         detail.InputTokens,
+			"completion_tokens":     detail.OutputTokens,
+			"total_tokens":          detail.TotalTokens,
+			"prompt_tokens_details": map[string]any{"cached_tokens": detail.CachedTokens},
+		}
+	}
+
+	encoded, errMarshal := json.Marshal(resp)
+	if errMarshal != nil {
+		return nil, detail, finishReason, fmt.Errorf("commandcode: marshal aggregated response: %w", errMarshal)
+	}
+	return encoded, detail, finishReason, nil
 }
