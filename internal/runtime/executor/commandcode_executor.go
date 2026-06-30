@@ -20,6 +20,7 @@ import (
 	"github.com/andybalholm/brotli"
 	"github.com/google/uuid"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
@@ -269,6 +270,11 @@ func (e *CommandCodeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Au
 		return
 	}
 
+	// Best-effort: register a device fingerprint the first time we see this
+	// (baseURL, apiKey) pair. Runs in the background so chat latency is not
+	// affected, and matches the official CLI's startup behavior.
+	helps.RecordFingerprintIfNeeded(baseURL, apiKey)
+
 	// Always stream upstream — see function comment. We aggregate below.
 	ccBody := e.buildRequestBody(req, opts, auth)
 
@@ -337,6 +343,11 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 		err = statusErr{code: http.StatusUnauthorized, msg: "missing command-code api key"}
 		return nil, err
 	}
+
+	// Best-effort: register a device fingerprint the first time we see this
+	// (baseURL, apiKey) pair. Runs in the background so chat latency is not
+	// affected, and matches the official CLI's startup behavior.
+	helps.RecordFingerprintIfNeeded(baseURL, apiKey)
 
 	// Always stream upstream — /alpha/generate is streaming-only.
 	ccBody := e.buildRequestBody(req, opts, auth)
@@ -629,10 +640,30 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 	// config.environment is the OS/Node.js info string (NOT "production", which
 	// is the x-cli-environment header value instead). memory/taste/skills use
 	// JSON null (not empty string) when absent, matching the `??null` pattern.
-	envInfo := e.ccEnvironmentString(auth)
+	//
+	// Git-related fields (workingDir, structure, isGitRepo, currentBranch,
+	// mainBranch, gitStatus, recentCommits) are seeded from a per-apiKey RNG
+	// so they stay stable across requests in the same process but vary per
+	// account. This matches what a real CLI looks like to the server: a
+	// coherent "developer workstation" with a single git project, as opposed
+	// to the obvious telltale of empty-string placeholders.
+	apiKey := e.resolveAPIKey(auth)
+	session := helps.CCSessionContextFor(apiKey)
+	structureJSON, _ := json.Marshal(session.Structure)
+	commitsJSON, _ := json.Marshal(session.RecentCommits)
 	body := fmt.Sprintf(
-		`{"params":{%s},"permissionMode":"standard","config":{"environment":%s,"workingDir":"/workspace","date":"%s","structure":[],"isGitRepo":false,"currentBranch":"","mainBranch":"","gitStatus":"","recentCommits":[]},"memory":null,"taste":null,"skills":null}`,
-		params, ccEncode(envInfo), time.Now().UTC().Format("2006-01-02"))
+		`{"params":{%s},"permissionMode":"standard","config":{"environment":%s,"workingDir":%s,"date":"%s","structure":%s,"isGitRepo":%t,"currentBranch":%s,"mainBranch":%s,"gitStatus":%s,"recentCommits":%s},"memory":null,"taste":null,"skills":null}`,
+		params,
+		ccEncode(session.Environment),
+		ccEncode(session.WorkingDir),
+		time.Now().UTC().Format("2006-01-02"),
+		string(structureJSON),
+		session.IsGitRepo,
+		ccEncode(session.CurrentBranch),
+		ccEncode(session.MainBranch),
+		ccEncode(session.GitStatus),
+		string(commitsJSON),
+	)
 
 	if sysPrompt != "" {
 		body, _ = sjson.Set(body, "params.system", sysPrompt)
