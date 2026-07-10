@@ -465,8 +465,8 @@ func TestCommandCodeExecutor_injectHeaders_CLIpfingerprint(t *testing.T) {
 		}
 	}
 
-	if got := getLower("x-command-code-version"); got != "0.40.11" {
-		t.Errorf("x-command-code-version = %q, want 0.40.11", got)
+	if got := getLower("x-command-code-version"); got != "0.44.1" {
+		t.Errorf("x-command-code-version = %q, want 0.44.1", got)
 	}
 	if got := getLower("x-cli-environment"); got != "production" {
 		t.Errorf("x-cli-environment = %q, want production", got)

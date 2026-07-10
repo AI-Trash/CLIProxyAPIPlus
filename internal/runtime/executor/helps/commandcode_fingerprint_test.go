@@ -138,8 +138,8 @@ func TestRecordFingerprintIfNeeded_PostsOnce(t *testing.T) {
 		if got := r.Header.Get("User-Agent"); got != "cli" {
 			t.Errorf("User-Agent = %q, want cli", got)
 		}
-		if got := r.Header.Get("x-command-code-version"); got != "0.40.11" {
-			t.Errorf("x-command-code-version = %q, want 0.40.11", got)
+		if got := r.Header.Get("x-command-code-version"); got != "0.44.1" {
+			t.Errorf("x-command-code-version = %q, want 0.44.1", got)
 		}
 		buf := make([]byte, 1024)
 		n, _ := r.Body.Read(buf)

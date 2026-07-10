@@ -451,7 +451,7 @@ func RecordFingerprintIfNeeded(baseURL, apiKey string) {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 		// Match the official CLI fingerprint headers.
 		req.Header.Set("x-cli-environment", "production")
-		req.Header.Set("x-command-code-version", "0.40.11")
+		req.Header.Set("x-command-code-version", "0.44.1")
 		req.Header.Set("User-Agent", "cli")
 
 		client := &http.Client{Timeout: 4 * time.Second}
@@ -490,7 +490,7 @@ func EnsureFingerprintRecorded(ctx context.Context, baseURL, apiKey string) erro
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("x-cli-environment", "production")
-	req.Header.Set("x-command-code-version", "0.40.11")
+	req.Header.Set("x-command-code-version", "0.44.1")
 	req.Header.Set("User-Agent", "cli")
 
 	client := &http.Client{Timeout: 4 * time.Second}
