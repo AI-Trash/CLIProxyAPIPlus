@@ -219,11 +219,11 @@ func upsertModelInfos(models []*ModelInfo, extras ...*ModelInfo) []*ModelInfo {
 func GetCommandCodeModels() []*ModelInfo {
 	now := int64(1732752000)
 	return []*ModelInfo{
-		// ── Premium models (Anthropic / OpenAI) ──
+		// ── Premium models (Anthropic) ──
 		{
-			ID: "anthropic:claude-sonnet-4-6", Object: "model", Created: now,
+			ID: "anthropic:claude-sonnet-5", Object: "model", Created: now,
 			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "Claude Sonnet 4.6", Description: "Anthropic Claude Sonnet 4.6 via Command Code",
+			DisplayName: "Claude Sonnet 5", Description: "Anthropic Claude Sonnet 5 via Command Code",
 			ContextLength: 200000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
 		},
 		{
@@ -245,6 +245,30 @@ func GetCommandCodeModels() []*ModelInfo {
 			ContextLength: 200000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
 		},
 		{
+			ID: "anthropic:claude-opus-4-5-20251101", Object: "model", Created: now,
+			OwnedBy: "commandcode", Type: "commandcode",
+			DisplayName: "Claude Opus 4.5", Description: "Anthropic Claude Opus 4.5 via Command Code",
+			ContextLength: 200000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
+		},
+		{
+			ID: "anthropic:claude-sonnet-4-6", Object: "model", Created: now,
+			OwnedBy: "commandcode", Type: "commandcode",
+			DisplayName: "Claude Sonnet 4.6", Description: "Anthropic Claude Sonnet 4.6 via Command Code",
+			ContextLength: 200000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
+		},
+		{
+			ID: "anthropic:claude-sonnet-4-5-20250929", Object: "model", Created: now,
+			OwnedBy: "commandcode", Type: "commandcode",
+			DisplayName: "Claude Sonnet 4.5", Description: "Anthropic Claude Sonnet 4.5 via Command Code",
+			ContextLength: 200000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
+		},
+		{
+			ID: "anthropic:claude-sonnet-4-20250514", Object: "model", Created: now,
+			OwnedBy: "commandcode", Type: "commandcode",
+			DisplayName: "Claude Sonnet 4", Description: "Anthropic Claude Sonnet 4 via Command Code",
+			ContextLength: 200000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
+		},
+		{
 			ID: "anthropic:claude-haiku-4-5-20251001", Object: "model", Created: now,
 			OwnedBy: "commandcode", Type: "commandcode",
 			DisplayName: "Claude Haiku 4.5", Description: "Anthropic Claude Haiku 4.5 via Command Code",
@@ -255,6 +279,25 @@ func GetCommandCodeModels() []*ModelInfo {
 			OwnedBy: "commandcode", Type: "commandcode",
 			DisplayName: "Claude Fable 5", Description: "Anthropic Claude Fable 5 via Command Code",
 			ContextLength: 1000000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
+		},
+		// ── Premium models (OpenAI) ──
+		{
+			ID: "openai:gpt-5.6-terra", Object: "model", Created: now,
+			OwnedBy: "commandcode", Type: "commandcode",
+			DisplayName: "GPT-5.6 Terra", Description: "OpenAI GPT-5.6 Terra via Command Code",
+			ContextLength: 200000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
+		},
+		{
+			ID: "openai:gpt-5.6-sol", Object: "model", Created: now,
+			OwnedBy: "commandcode", Type: "commandcode",
+			DisplayName: "GPT-5.6 Sol", Description: "OpenAI GPT-5.6 Sol via Command Code",
+			ContextLength: 200000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
+		},
+		{
+			ID: "openai:gpt-5.6-luna", Object: "model", Created: now,
+			OwnedBy: "commandcode", Type: "commandcode",
+			DisplayName: "GPT-5.6 Luna", Description: "OpenAI GPT-5.6 Luna via Command Code",
+			ContextLength: 200000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
 		},
 		{
 			ID: "openai:gpt-5.5", Object: "model", Created: now,
@@ -274,11 +317,30 @@ func GetCommandCodeModels() []*ModelInfo {
 			DisplayName: "GPT-5.4 Mini", Description: "OpenAI GPT-5.4 Mini via Command Code",
 			ContextLength: 128000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
 		},
-		// ── Open-source models (Go plan) ──
+		{
+			ID: "openai:gpt-5.3-codex", Object: "model", Created: now,
+			OwnedBy: "commandcode", Type: "commandcode",
+			DisplayName: "GPT-5.3 Codex", Description: "OpenAI GPT-5.3 Codex via Command Code",
+			ContextLength: 200000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
+		},
+		// ── Google models ──
+		{
+			ID: "google/gemini-3.5-flash", Object: "model", Created: now,
+			OwnedBy: "commandcode", Type: "commandcode",
+			DisplayName: "Gemini 3.5 Flash", Description: "Google Gemini 3.5 Flash via Command Code",
+			ContextLength: 1000000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
+		},
+		{
+			ID: "google/gemini-3.1-flash-lite", Object: "model", Created: now,
+			OwnedBy: "commandcode", Type: "commandcode",
+			DisplayName: "Gemini 3.1 Flash Lite", Description: "Google Gemini 3.1 Flash Lite via Command Code",
+			ContextLength: 1000000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
+		},
+		// ── Open-source models ──
 		{
 			ID: "deepseek/deepseek-v4-pro", Object: "model", Created: now,
 			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "DeepSeek V4 Pro", Description: "DeepSeek V4 Pro via Command Code (75% off permanently)",
+			DisplayName: "DeepSeek V4 Pro", Description: "DeepSeek V4 Pro via Command Code",
 			ContextLength: 1000000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
 		},
 		{
@@ -288,9 +350,15 @@ func GetCommandCodeModels() []*ModelInfo {
 			ContextLength: 1000000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
 		},
 		{
-			ID: "moonshotai/Kimi-K2.5", Object: "model", Created: now,
+			ID: "moonshotai/Kimi-K2.7-Code", Object: "model", Created: now,
 			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "Kimi K2.5", Description: "Moonshot Kimi K2.5 via Command Code",
+			DisplayName: "Kimi K2.7 Code", Description: "Moonshot Kimi K2.7 Code via Command Code",
+			ContextLength: 128000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
+		},
+		{
+			ID: "moonshotai/Kimi-K2.7-Code-Highspeed", Object: "model", Created: now,
+			OwnedBy: "commandcode", Type: "commandcode",
+			DisplayName: "Kimi K2.7 Code Highspeed", Description: "Moonshot Kimi K2.7 Code Highspeed via Command Code",
 			ContextLength: 128000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
 		},
 		{
@@ -300,10 +368,22 @@ func GetCommandCodeModels() []*ModelInfo {
 			ContextLength: 128000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
 		},
 		{
-			ID: "zai-org/GLM-5", Object: "model", Created: now,
+			ID: "moonshotai/Kimi-K2.5", Object: "model", Created: now,
 			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "GLM-5", Description: "Zhipu GLM-5 via Command Code",
+			DisplayName: "Kimi K2.5", Description: "Moonshot Kimi K2.5 via Command Code",
 			ContextLength: 128000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
+		},
+		{
+			ID: "zai-org/GLM-5.2", Object: "model", Created: now,
+			OwnedBy: "commandcode", Type: "commandcode",
+			DisplayName: "GLM-5.2", Description: "Zhipu GLM-5.2 via Command Code",
+			ContextLength: 256000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
+		},
+		{
+			ID: "zai-org/GLM-5.2-Fast", Object: "model", Created: now,
+			OwnedBy: "commandcode", Type: "commandcode",
+			DisplayName: "GLM-5.2 Fast", Description: "Zhipu GLM-5.2 Fast via Command Code",
+			ContextLength: 256000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
 		},
 		{
 			ID: "zai-org/GLM-5.1", Object: "model", Created: now,
@@ -312,10 +392,22 @@ func GetCommandCodeModels() []*ModelInfo {
 			ContextLength: 256000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
 		},
 		{
-			ID: "MiniMaxAI/MiniMax-M2.5", Object: "model", Created: now,
+			ID: "zai-org/GLM-5", Object: "model", Created: now,
 			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "MiniMax M2.5", Description: "MiniMax M2.5 via Command Code",
-			ContextLength: 200000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
+			DisplayName: "GLM-5", Description: "Zhipu GLM-5 via Command Code",
+			ContextLength: 128000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
+		},
+		{
+			ID: "MiniMaxAI/MiniMax-M3", Object: "model", Created: now,
+			OwnedBy: "commandcode", Type: "commandcode",
+			DisplayName: "MiniMax M3", Description: "MiniMax M3 via Command Code",
+			ContextLength: 1000000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
+		},
+		{
+			ID: "MiniMaxAI/MiniMax-M3-Free", Object: "model", Created: now,
+			OwnedBy: "commandcode", Type: "commandcode",
+			DisplayName: "MiniMax M3 Free", Description: "MiniMax M3 Free via Command Code",
+			ContextLength: 1000000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
 		},
 		{
 			ID: "MiniMaxAI/MiniMax-M2.7", Object: "model", Created: now,
@@ -324,46 +416,16 @@ func GetCommandCodeModels() []*ModelInfo {
 			ContextLength: 1000000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
 		},
 		{
-			ID: "xiaomi/mimo-v2.5", Object: "model", Created: now,
+			ID: "MiniMaxAI/MiniMax-M2.5", Object: "model", Created: now,
 			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "MiMo V2.5", Description: "Xiaomi MiMo V2.5 via Command Code (98% off permanently)",
+			DisplayName: "MiniMax M2.5", Description: "MiniMax M2.5 via Command Code",
 			ContextLength: 200000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
 		},
 		{
-			ID: "xiaomi/mimo-v2.5-pro", Object: "model", Created: now,
+			ID: "xai/grok-4.5", Object: "model", Created: now,
 			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "MiMo V2.5 Pro", Description: "Xiaomi MiMo V2.5 Pro via Command Code (99% off permanently)",
-			ContextLength: 1000000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "nvidia/nemotron-3-ultra-550b-a55b", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "Nemotron 3 Ultra", Description: "NVIDIA Nemotron 3 Ultra via Command Code (57% off permanently)",
-			ContextLength: 1000000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "Qwen/Qwen3.7-Max", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "Qwen 3.7 Max", Description: "Alibaba Qwen 3.7 Max via Command Code (50% off through Jun 22 2026)",
+			DisplayName: "Grok 4.5", Description: "xAI Grok 4.5 via Command Code",
 			ContextLength: 128000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "Qwen/Qwen3.6-Max-Preview", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "Qwen 3.6 Max Preview", Description: "Alibaba Qwen 3.6 Max Preview via Command Code",
-			ContextLength: 128000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "stepfun/step-3.7-flash", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "Step 3.7 Flash", Description: "StepFun Step 3.7 Flash via Command Code",
-			ContextLength: 128000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "stepfun/Step-3.5-Flash", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "Step 3.5 Flash", Description: "StepFun Step 3.5 Flash via Command Code",
-			ContextLength: 256000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
 		},
 	}
 }
