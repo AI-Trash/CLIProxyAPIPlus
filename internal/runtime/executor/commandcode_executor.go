@@ -35,7 +35,7 @@ import (
 const (
 	commandCodeDefaultBaseURL = "https://api.commandcode.ai"
 	ccHeaderProdEnv           = "production"
-	ccHeaderVersion           = "0.40.11"
+	ccHeaderVersion           = "0.44.1"
 	ccDefaultProjectSlug      = "workspace"
 	ccDefaultNodeVersion      = "v22.11.0"
 	ccUserAgent               = "cli"
