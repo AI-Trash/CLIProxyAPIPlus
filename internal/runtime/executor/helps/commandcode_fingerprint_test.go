@@ -138,8 +138,8 @@ func TestRecordFingerprintIfNeeded_PostsOnce(t *testing.T) {
 		if got := r.Header.Get("User-Agent"); got != "cli" {
 			t.Errorf("User-Agent = %q, want cli", got)
 		}
-		if got := r.Header.Get("x-command-code-version"); got != "0.44.1" {
-			t.Errorf("x-command-code-version = %q, want 0.44.1", got)
+		if got := r.Header.Get("x-command-code-version"); got != CCCLIVersion {
+			t.Errorf("x-command-code-version = %q, want %s", got, CCCLIVersion)
 		}
 		buf := make([]byte, 1024)
 		n, _ := r.Body.Read(buf)
@@ -183,5 +183,67 @@ func TestEnsureFingerprintRecorded_Sync(t *testing.T) {
 	}
 	if !strings.Contains(gotBody, `"components"`) {
 		t.Errorf("recorded body missing components: %s", gotBody)
+	}
+}
+
+func TestCCSessionIDFor_Stable(t *testing.T) {
+	ResetFingerprintCache()
+	id1 := CCSessionIDFor("sess-key")
+	id2 := CCSessionIDFor("sess-key")
+	if id1 != id2 {
+		t.Fatalf("session id not stable: %q vs %q", id1, id2)
+	}
+	if len(id1) != 36 {
+		t.Errorf("session id length = %d, want 36 (uuid)", len(id1))
+	}
+	id3 := CCSessionIDFor("other-key")
+	if id3 == id1 {
+		t.Errorf("different api keys produced identical session ids: %q", id1)
+	}
+}
+
+func TestSignalsSharedBetweenFingerprintAndSession(t *testing.T) {
+	ResetFingerprintCache()
+	// Generating session first then fingerprint (and vice versa) must stay coherent:
+	// same machineId drives both thumbmark and session seed.
+	sc := CCSessionContextFor("shared-key")
+	fp := CCFingerprintFor("shared-key")
+	if fp.Thumbmark == "" {
+		t.Fatal("empty thumbmark")
+	}
+	if sc.WorkingDir == "" {
+		t.Fatal("empty workingDir")
+	}
+	// Re-fetch after the other path has run — must be identical.
+	sc2 := CCSessionContextFor("shared-key")
+	fp2 := CCFingerprintFor("shared-key")
+	if sc.WorkingDir != sc2.WorkingDir {
+		t.Errorf("workingDir drifted: %q vs %q", sc.WorkingDir, sc2.WorkingDir)
+	}
+	if fp.Thumbmark != fp2.Thumbmark {
+		t.Errorf("thumbmark drifted: %q vs %q", fp.Thumbmark, fp2.Thumbmark)
+	}
+}
+
+func TestGenerateSignals_Deterministic(t *testing.T) {
+	ResetFingerprintCache()
+	s1 := generateSignals("det-key")
+	s2 := generateSignals("det-key")
+	if s1.MachineID != s2.MachineID {
+		t.Errorf("machineId not deterministic: %q vs %q", s1.MachineID, s2.MachineID)
+	}
+	if len(s1.MachineID) != 32 {
+		t.Errorf("machineId length = %d, want 32 hex chars", len(s1.MachineID))
+	}
+	if len(s1.MACAddresses) != 2 {
+		t.Fatalf("expected 2 MACs, got %d", len(s1.MACAddresses))
+	}
+	// MAC must be 6 octets (aa:bb:cc:dd:ee:ff).
+	parts := strings.Split(s1.MACAddresses[0], ":")
+	if len(parts) != 6 {
+		t.Errorf("MAC %q has %d octets, want 6", s1.MACAddresses[0], len(parts))
+	}
+	if s1.OSRelease == "" || s1.OSRelease == "fake-release" {
+		t.Errorf("osRelease should be a plausible release string, got %q", s1.OSRelease)
 	}
 }
