@@ -261,218 +261,65 @@ func upsertModelInfos(models []*ModelInfo, extras ...*ModelInfo) []*ModelInfo {
 }
 
 // GetCommandCodeModels returns the available model definitions for Command Code.
-// Model IDs use the canonical format sent to /alpha/generate (provider/name style).
+// Synced from command-code@0.44.1 (npm) model catalog (Kt in dist/cli.mjs).
+// Anthropic/OpenAI entries use the Ot billing full-id form (provider:name);
+// open-source entries use the Kt canonical path form (org/name).
 func GetCommandCodeModels() []*ModelInfo {
 	now := int64(1732752000)
+	ep := []string{"/chat/completions", "/responses"}
+	cc := func(id, display, desc string, ctxLen int) *ModelInfo {
+		return &ModelInfo{
+			ID: id, Object: "model", Created: now,
+			OwnedBy: "commandcode", Type: "commandcode",
+			DisplayName: display, Description: desc,
+			ContextLength: ctxLen, SupportedEndpoints: ep,
+		}
+	}
 	return []*ModelInfo{
-		// ── Premium models (Anthropic) ──
-		{
-			ID: "anthropic:claude-sonnet-5", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "Claude Sonnet 5", Description: "Anthropic Claude Sonnet 5 via Command Code",
-			ContextLength: 200000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "anthropic:claude-opus-4-8", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "Claude Opus 4.8", Description: "Anthropic Claude Opus 4.8 via Command Code",
-			ContextLength: 200000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "anthropic:claude-opus-4-7", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "Claude Opus 4.7", Description: "Anthropic Claude Opus 4.7 via Command Code",
-			ContextLength: 200000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "anthropic:claude-opus-4-6", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "Claude Opus 4.6", Description: "Anthropic Claude Opus 4.6 via Command Code",
-			ContextLength: 200000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "anthropic:claude-opus-4-5-20251101", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "Claude Opus 4.5", Description: "Anthropic Claude Opus 4.5 via Command Code",
-			ContextLength: 200000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "anthropic:claude-sonnet-4-6", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "Claude Sonnet 4.6", Description: "Anthropic Claude Sonnet 4.6 via Command Code",
-			ContextLength: 200000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "anthropic:claude-sonnet-4-5-20250929", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "Claude Sonnet 4.5", Description: "Anthropic Claude Sonnet 4.5 via Command Code",
-			ContextLength: 200000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "anthropic:claude-sonnet-4-20250514", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "Claude Sonnet 4", Description: "Anthropic Claude Sonnet 4 via Command Code",
-			ContextLength: 200000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "anthropic:claude-haiku-4-5-20251001", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "Claude Haiku 4.5", Description: "Anthropic Claude Haiku 4.5 via Command Code",
-			ContextLength: 200000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "anthropic:claude-fable-5", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "Claude Fable 5", Description: "Anthropic Claude Fable 5 via Command Code",
-			ContextLength: 1000000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
+		// ── Premium models (Anthropic) — Ot billing ids ──
+		cc("anthropic:claude-sonnet-5", "Claude Sonnet 5", "Anthropic Claude Sonnet 5 via Command Code", 1000000),
+		cc("anthropic:claude-sonnet-4-6", "Claude Sonnet 4.6", "Anthropic Claude Sonnet 4.6 via Command Code", 1000000),
+		cc("anthropic:claude-fable-5", "Claude Fable 5", "Anthropic Claude Fable 5 via Command Code", 1000000),
+		cc("anthropic:claude-opus-4-8", "Claude Opus 4.8", "Anthropic Claude Opus 4.8 via Command Code", 1000000),
+		cc("anthropic:claude-opus-4-7", "Claude Opus 4.7", "Anthropic Claude Opus 4.7 via Command Code", 1000000),
+		cc("anthropic:claude-haiku-4-5-20251001", "Claude Haiku 4.5", "Anthropic Claude Haiku 4.5 via Command Code", 200000),
 		// ── Premium models (OpenAI) ──
-		{
-			ID: "openai:gpt-5.6-terra", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "GPT-5.6 Terra", Description: "OpenAI GPT-5.6 Terra via Command Code",
-			ContextLength: 200000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "openai:gpt-5.6-sol", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "GPT-5.6 Sol", Description: "OpenAI GPT-5.6 Sol via Command Code",
-			ContextLength: 200000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "openai:gpt-5.6-luna", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "GPT-5.6 Luna", Description: "OpenAI GPT-5.6 Luna via Command Code",
-			ContextLength: 200000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "openai:gpt-5.5", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "GPT-5.5", Description: "OpenAI GPT-5.5 via Command Code",
-			ContextLength: 200000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "openai:gpt-5.4", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "GPT-5.4", Description: "OpenAI GPT-5.4 via Command Code",
-			ContextLength: 200000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "openai:gpt-5.4-mini", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "GPT-5.4 Mini", Description: "OpenAI GPT-5.4 Mini via Command Code",
-			ContextLength: 128000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "openai:gpt-5.3-codex", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "GPT-5.3 Codex", Description: "OpenAI GPT-5.3 Codex via Command Code",
-			ContextLength: 200000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		// ── Google models ──
-		{
-			ID: "google/gemini-3.5-flash", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "Gemini 3.5 Flash", Description: "Google Gemini 3.5 Flash via Command Code",
-			ContextLength: 1000000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "google/gemini-3.1-flash-lite", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "Gemini 3.1 Flash Lite", Description: "Google Gemini 3.1 Flash Lite via Command Code",
-			ContextLength: 1000000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		// ── Open-source models ──
-		{
-			ID: "deepseek/deepseek-v4-pro", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "DeepSeek V4 Pro", Description: "DeepSeek V4 Pro via Command Code",
-			ContextLength: 1000000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "deepseek/deepseek-v4-flash", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "DeepSeek V4 Flash", Description: "DeepSeek V4 Flash via Command Code",
-			ContextLength: 1000000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "moonshotai/Kimi-K2.7-Code", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "Kimi K2.7 Code", Description: "Moonshot Kimi K2.7 Code via Command Code",
-			ContextLength: 128000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "moonshotai/Kimi-K2.7-Code-Highspeed", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "Kimi K2.7 Code Highspeed", Description: "Moonshot Kimi K2.7 Code Highspeed via Command Code",
-			ContextLength: 128000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "moonshotai/Kimi-K2.6", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "Kimi K2.6", Description: "Moonshot Kimi K2.6 via Command Code",
-			ContextLength: 128000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "moonshotai/Kimi-K2.5", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "Kimi K2.5", Description: "Moonshot Kimi K2.5 via Command Code",
-			ContextLength: 128000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "zai-org/GLM-5.2", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "GLM-5.2", Description: "Zhipu GLM-5.2 via Command Code",
-			ContextLength: 256000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "zai-org/GLM-5.2-Fast", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "GLM-5.2 Fast", Description: "Zhipu GLM-5.2 Fast via Command Code",
-			ContextLength: 256000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "zai-org/GLM-5.1", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "GLM-5.1", Description: "Zhipu GLM-5.1 via Command Code",
-			ContextLength: 256000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "zai-org/GLM-5", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "GLM-5", Description: "Zhipu GLM-5 via Command Code",
-			ContextLength: 128000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "MiniMaxAI/MiniMax-M3", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "MiniMax M3", Description: "MiniMax M3 via Command Code",
-			ContextLength: 1000000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "MiniMaxAI/MiniMax-M3-Free", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "MiniMax M3 Free", Description: "MiniMax M3 Free via Command Code",
-			ContextLength: 1000000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "MiniMaxAI/MiniMax-M2.7", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "MiniMax M2.7", Description: "MiniMax M2.7 via Command Code",
-			ContextLength: 1000000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "MiniMaxAI/MiniMax-M2.5", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "MiniMax M2.5", Description: "MiniMax M2.5 via Command Code",
-			ContextLength: 200000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
-		{
-			ID: "xai/grok-4.5", Object: "model", Created: now,
-			OwnedBy: "commandcode", Type: "commandcode",
-			DisplayName: "Grok 4.5", Description: "xAI Grok 4.5 via Command Code",
-			ContextLength: 128000, SupportedEndpoints: []string{"/chat/completions", "/responses"},
-		},
+		cc("openai:gpt-5.6-sol", "GPT-5.6 Sol", "OpenAI GPT-5.6 Sol via Command Code", 1050000),
+		cc("openai:gpt-5.6-terra", "GPT-5.6 Terra", "OpenAI GPT-5.6 Terra via Command Code", 1050000),
+		cc("openai:gpt-5.6-luna", "GPT-5.6 Luna", "OpenAI GPT-5.6 Luna via Command Code", 1050000),
+		cc("openai:gpt-5.5", "GPT-5.5", "OpenAI GPT-5.5 via Command Code", 400000),
+		cc("openai:gpt-5.4", "GPT-5.4", "OpenAI GPT-5.4 via Command Code", 400000),
+		cc("openai:gpt-5.3-codex", "GPT-5.3 Codex", "OpenAI GPT-5.3 Codex via Command Code", 400000),
+		cc("openai:gpt-5.4-mini", "GPT-5.4 Mini", "OpenAI GPT-5.4 Mini via Command Code", 400000),
+		// ── Open-source / gateway models (Kt canonical ids) ──
+		cc("deepseek/deepseek-v4-pro", "DeepSeek V4 Pro", "DeepSeek V4 Pro via Command Code", 1000000),
+		cc("deepseek/deepseek-v4-flash", "DeepSeek V4 Flash", "DeepSeek V4 Flash via Command Code", 1000000),
+		cc("moonshotai/Kimi-K2.7-Code", "Kimi K2.7 Code", "Moonshot Kimi K2.7 Code via Command Code", 256000),
+		cc("moonshotai/Kimi-K2.7-Code-Highspeed", "Kimi K2.7 Code Highspeed", "Moonshot Kimi K2.7 Code Highspeed via Command Code", 262000),
+		cc("moonshotai/Kimi-K2.6", "Kimi K2.6", "Moonshot Kimi K2.6 via Command Code", 256000),
+		cc("moonshotai/Kimi-K2.5", "Kimi K2.5", "Moonshot Kimi K2.5 via Command Code", 256000),
+		cc("zai-org/GLM-5.2", "GLM-5.2", "Zhipu GLM-5.2 via Command Code", 1000000),
+		cc("zai-org/GLM-5.2-Fast", "GLM-5.2 Fast", "Zhipu GLM-5.2 Fast via Command Code", 1000000),
+		cc("zai-org/GLM-5.1", "GLM-5.1", "Zhipu GLM-5.1 via Command Code", 256000),
+		cc("zai-org/GLM-5", "GLM-5", "Zhipu GLM-5 via Command Code", 200000),
+		cc("MiniMaxAI/MiniMax-M3", "MiniMax M3", "MiniMax M3 via Command Code", 1000000),
+		cc("MiniMaxAI/MiniMax-M2.7", "MiniMax M2.7", "MiniMax M2.7 via Command Code", 1000000),
+		cc("MiniMaxAI/MiniMax-M2.5", "MiniMax M2.5", "MiniMax M2.5 via Command Code", 200000),
+		cc("xiaomi/mimo-v2.5-pro", "MiMo V2.5 Pro", "Xiaomi MiMo V2.5 Pro via Command Code", 1000000),
+		cc("xiaomi/mimo-v2.5", "MiMo V2.5", "Xiaomi MiMo V2.5 via Command Code", 1000000),
+		cc("Qwen/Qwen3.6-Max-Preview", "Qwen 3.6 Max Preview", "Qwen 3.6 Max Preview via Command Code", 1000000),
+		cc("Qwen/Qwen3.6-Plus", "Qwen 3.6 Plus", "Qwen 3.6 Plus via Command Code", 1000000),
+		cc("Qwen/Qwen3.7-Max", "Qwen 3.7 Max", "Qwen 3.7 Max via Command Code", 1000000),
+		cc("Qwen/Qwen3.7-Plus", "Qwen 3.7 Plus", "Qwen 3.7 Plus via Command Code", 1000000),
+		cc("stepfun/Step-3.7-Flash", "Step 3.7 Flash", "StepFun Step 3.7 Flash via Command Code", 256000),
+		cc("stepfun/Step-3.5-Flash", "Step 3.5 Flash", "StepFun Step 3.5 Flash via Command Code", 1000000),
+		cc("tencent/Hy3", "Tencent Hy3", "Tencent Hy3 via Command Code", 262144),
+		cc("google/gemini-3.5-flash", "Gemini 3.5 Flash", "Google Gemini 3.5 Flash via Command Code", 1000000),
+		cc("google/gemini-3.1-flash-lite", "Gemini 3.1 Flash Lite", "Google Gemini 3.1 Flash Lite via Command Code", 1000000),
+		cc("sakana/fugu-ultra", "Fugu Ultra", "Sakana Fugu Ultra via Command Code", 1000000),
+		cc("nvidia/nemotron-3-ultra-550b-a55b", "Nemotron 3 Ultra", "NVIDIA Nemotron 3 Ultra via Command Code", 1000000),
+		cc("meta/muse-spark-1.1", "Muse Spark 1.1", "Meta Muse Spark 1.1 via Command Code", 1048576),
+		cc("xai/grok-4.5", "Grok 4.5", "xAI Grok 4.5 via Command Code", 500000),
 	}
 }
 
