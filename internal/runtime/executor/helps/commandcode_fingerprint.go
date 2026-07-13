@@ -3,7 +3,6 @@ package helps
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -17,10 +16,16 @@ import (
 	"time"
 )
 
+// CCCLIVersion is the official command-code CLI version we fingerprint as.
+// Keep this in lockstep with https://www.npmjs.com/package/command-code (latest).
+// Used for x-command-code-version on generate, fingerprint/record, and login.
+const CCCLIVersion = "0.44.1"
+
 // ccFingerprintSalt is the device-fingerprint salt embedded in the official
 // command-code CLI (>=0.40.x). It is publicly visible in the npm bundle and
 // is required to compute a thumbmark that the server can verify against
 // incoming /alpha/fingerprint/record submissions.
+// Verified against command-code@0.44.1 dist/cli.mjs (var Bw="command-code:device-fingerprint:v1").
 const ccFingerprintSalt = "command-code:device-fingerprint:v1"
 
 // ccFingerprint is the payload posted to /alpha/fingerprint/record. The
@@ -167,9 +172,11 @@ func buildFingerprint(signals ccSignals) ccFingerprint {
 // ---------------------------------------------------------------------------
 
 var (
-	ccSignalPool   sync.Map // scope -> ccFingerprint
-	ccSessionPool  sync.Map // scope -> *ccSessionContext
-	ccRecordedKeys sync.Map // scope -> struct{}
+	ccRawSignalPool sync.Map // scope -> ccSignals  (shared by fingerprint + session)
+	ccSignalPool    sync.Map // scope -> ccFingerprint
+	ccSessionPool   sync.Map // scope -> *ccSessionContext
+	ccSessionIDPool sync.Map // scope -> string (stable x-session-id per apiKey)
+	ccRecordedKeys  sync.Map // scope -> struct{}
 )
 
 func ccKeyScope(raw string) string {
@@ -177,25 +184,23 @@ func ccKeyScope(raw string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// randomHex returns n bytes of random hex. Falls back to math/rand if the
-// crypto source is unavailable (extremely rare; mostly defensive).
-func randomHex(n int) string {
-	buf := make([]byte, n)
-	if _, err := rand.Read(buf); err != nil {
-		mrand.Read(buf)
-	}
-	return hex.EncodeToString(buf)
-}
-
-// randomMixedToken returns a stable pseudo-random word of length n using
-// [a-z0-9].
-func randomMixedToken(rng *mrand.Rand, n int) string {
-	const letters = "abcdefghijklmnopqrstuvwxyz0123456789"
+// randomHexToken returns n hex characters from the seeded RNG (stable).
+func randomHexToken(rng *mrand.Rand, n int) string {
+	const hexdigits = "0123456789abcdef"
 	out := make([]byte, n)
 	for i := range out {
-		out[i] = letters[rng.Intn(len(letters))]
+		out[i] = hexdigits[rng.Intn(len(hexdigits))]
 	}
 	return string(out)
+}
+
+// randomMAC builds a locally-administered unicast MAC (02:xx:xx:xx:xx:xx).
+// Matches the shape produced by Node's os.networkInterfaces().
+func randomMAC(rng *mrand.Rand) string {
+	return fmt.Sprintf("02:%s:%s:%s:%s:%s",
+		randomHexToken(rng, 2), randomHexToken(rng, 2),
+		randomHexToken(rng, 2), randomHexToken(rng, 2),
+		randomHexToken(rng, 2))
 }
 
 // seededRand builds a math/rand RNG seeded from the given strings so that the
@@ -215,6 +220,9 @@ func seededRand(parts ...string) *mrand.Rand {
 // the given apiKey. Values are intentionally fake so they don't leak the host
 // running the proxy, but they are stable across requests so the upstream sees
 // a coherent "machine fingerprint" for the session.
+//
+// All fields (including machineId and MACs) are derived from the seeded RNG so
+// fingerprint and session-context builders share identical signals.
 func generateSignals(apiKey string) ccSignals {
 	rng := seededRand("cc-signals", apiKey)
 
@@ -262,21 +270,30 @@ func generateSignals(apiKey string) ccSignals {
 		"Australia/Sydney",
 	}
 
+	// Plausible os.release() values per platform (Node os.release()).
+	osReleases := map[string][]string{
+		"darwin": {"23.6.0", "24.1.0", "24.3.0", "24.4.0"},
+		"linux":  {"6.5.0-44-generic", "6.8.0-41-generic", "5.15.0-122-generic"},
+		"win32":  {"10.0.22631", "10.0.26100", "10.0.19045"},
+	}
+	releaseList := osReleases[platform]
+	if len(releaseList) == 0 {
+		releaseList = []string{"6.8.0-generic"}
+	}
+	osRelease := releaseList[rng.Intn(len(releaseList))]
+
 	hostname := hostnames[rng.Intn(len(hostnames))]
 	osUser := osUsers[rng.Intn(len(osUsers))]
 	gitEmail := emails[rng.Intn(len(emails))]
 	timezone := timezones[rng.Intn(len(timezones))]
 
 	// Two stable MACs derived from the seed (not real addresses).
-	mac1 := fmt.Sprintf("02:%s:%s:%s:%s",
-		randomMixedToken(rng, 2), randomMixedToken(rng, 2),
-		randomMixedToken(rng, 2), randomMixedToken(rng, 2))
-	mac2 := fmt.Sprintf("02:%s:%s:%s:%s",
-		randomMixedToken(rng, 2), randomMixedToken(rng, 2),
-		randomMixedToken(rng, 2), randomMixedToken(rng, 2))
+	mac1 := randomMAC(rng)
+	mac2 := randomMAC(rng)
 
-	// machineId: 32 hex chars, like /etc/machine-id on Linux.
-	machineID := randomHex(16)
+	// machineId: 32 hex chars, like /etc/machine-id on Linux. Seeded so
+	// fingerprint and session context always share the same machine identity.
+	machineID := randomHexToken(rng, 32)
 
 	return ccSignals{
 		MachineID:    machineID,
@@ -286,13 +303,29 @@ func generateSignals(apiKey string) ccSignals {
 		GitEmail:     gitEmail,
 		Platform:     platform,
 		Arch:         arch,
-		OSRelease:    "fake-release",
+		OSRelease:    osRelease,
 		CPUModel:     cpuModel,
 		CPUCount:     cpuCount,
 		TotalMemGiB:  memGiB,
 		IsContainer:  false,
 		Timezone:     timezone,
 	}
+}
+
+// signalsFor returns the stable per-apiKey raw signals, generating once.
+func signalsFor(apiKey string) ccSignals {
+	if apiKey == "" {
+		apiKey = "anonymous"
+	}
+	scope := ccKeyScope(apiKey)
+	if cached, ok := ccRawSignalPool.Load(scope); ok {
+		if s, ok := cached.(ccSignals); ok {
+			return s
+		}
+	}
+	s := generateSignals(apiKey)
+	ccRawSignalPool.Store(scope, s)
+	return s
 }
 
 // CCFingerprintFor returns the stable fingerprint for the given apiKey,
@@ -307,10 +340,36 @@ func CCFingerprintFor(apiKey string) ccFingerprint {
 			return fp
 		}
 	}
-	signals := generateSignals(apiKey)
-	fp := buildFingerprint(signals)
+	fp := buildFingerprint(signalsFor(apiKey))
 	ccSignalPool.Store(scope, fp)
 	return fp
+}
+
+// CCSessionIDFor returns a stable UUID-like session id for the given apiKey.
+// The official CLI reuses one session id for the lifetime of a process session;
+// we mirror that with a per-apiKey cached value so generate requests don't look
+// like a new CLI process on every call.
+func CCSessionIDFor(apiKey string) string {
+	if apiKey == "" {
+		apiKey = "anonymous"
+	}
+	scope := ccKeyScope(apiKey)
+	if cached, ok := ccSessionIDPool.Load(scope); ok {
+		if id, ok := cached.(string); ok && id != "" {
+			return id
+		}
+	}
+	// UUID v4 shape from seeded bytes (version/variant bits set correctly).
+	rng := seededRand("cc-session-id", apiKey)
+	var b [16]byte
+	for i := range b {
+		b[i] = byte(rng.Intn(256))
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	id := fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+	ccSessionIDPool.Store(scope, id)
+	return id
 }
 
 // ccSessionContext is the set of fake environment values that are stable per
@@ -330,6 +389,7 @@ type ccSessionContext struct {
 }
 
 // CCSessionContextFor returns the stable per-apiKey session context.
+// Uses the same raw signals as CCFingerprintFor so machine identity is coherent.
 func CCSessionContextFor(apiKey string) *ccSessionContext {
 	if apiKey == "" {
 		apiKey = "anonymous"
@@ -340,8 +400,7 @@ func CCSessionContextFor(apiKey string) *ccSessionContext {
 			return sc
 		}
 	}
-	signals := generateSignals(apiKey)
-	sc := buildSessionContext(signals)
+	sc := buildSessionContext(signalsFor(apiKey))
 	ccSessionPool.Store(scope, sc)
 	return sc
 }
@@ -447,12 +506,7 @@ func RecordFingerprintIfNeeded(baseURL, apiKey string) {
 		if err != nil {
 			return
 		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-		// Match the official CLI fingerprint headers.
-		req.Header.Set("x-cli-environment", "production")
-		req.Header.Set("x-command-code-version", "0.44.1")
-		req.Header.Set("User-Agent", "cli")
+		applyFingerprintHeaders(req, apiKey)
 
 		client := &http.Client{Timeout: 4 * time.Second}
 		resp, err := client.Do(req)
@@ -464,6 +518,24 @@ func RecordFingerprintIfNeeded(baseURL, apiKey string) {
 			_ = resp.Body.Close()
 		}()
 	}()
+}
+
+// applyFingerprintHeaders sets the same headers the official CLI's Ms client
+// attaches to /alpha/fingerprint/record (buildHeaders in command-code@0.44.1).
+// Keys are stored lowercase to match Node fetch/undici over HTTP/1.1.
+func applyFingerprintHeaders(req *http.Request, apiKey string) {
+	setLower := func(key, value string) {
+		req.Header.Del(key)
+		req.Header[key] = []string{value}
+	}
+	setLower("content-type", "application/json")
+	setLower("accept", "*/*")
+	setLower("accept-language", "*")
+	setLower("accept-encoding", "gzip, deflate, br")
+	setLower("authorization", "Bearer "+apiKey)
+	setLower("x-cli-environment", "production")
+	setLower("x-command-code-version", CCCLIVersion)
+	setLower("User-Agent", "cli")
 }
 
 // EnsureFingerprintRecorded is a synchronous variant that blocks on the
@@ -487,11 +559,7 @@ func EnsureFingerprintRecorded(ctx context.Context, baseURL, apiKey string) erro
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("x-cli-environment", "production")
-	req.Header.Set("x-command-code-version", "0.44.1")
-	req.Header.Set("User-Agent", "cli")
+	applyFingerprintHeaders(req, apiKey)
 
 	client := &http.Client{Timeout: 4 * time.Second}
 	resp, doErr := client.Do(req)
@@ -512,6 +580,8 @@ func EnsureFingerprintRecorded(ctx context.Context, baseURL, apiKey string) erro
 // tests.
 func ResetFingerprintCache() {
 	ccRecordedKeys = sync.Map{}
+	ccRawSignalPool = sync.Map{}
 	ccSignalPool = sync.Map{}
 	ccSessionPool = sync.Map{}
+	ccSessionIDPool = sync.Map{}
 }

@@ -35,10 +35,10 @@ import (
 const (
 	commandCodeDefaultBaseURL = "https://api.commandcode.ai"
 	ccHeaderProdEnv           = "production"
-	ccHeaderVersion           = "0.44.1"
-	ccDefaultProjectSlug      = "workspace"
-	ccDefaultNodeVersion      = "v22.11.0"
-	ccUserAgent               = "cli"
+	// ccHeaderVersion tracks helps.CCCLIVersion (command-code npm latest).
+	ccDefaultProjectSlug = "workspace"
+	ccDefaultNodeVersion = "v22.11.0"
+	ccUserAgent          = "cli"
 )
 
 // CommandCodeExecutor implements ProviderExecutor for the Command Code CLI's
@@ -92,12 +92,21 @@ func (e *CommandCodeExecutor) injectHeaders(req *http.Request, auth *cliproxyaut
 	}
 
 	// CLI fingerprint headers — the official CLI sets these in lowercase.
+	// Verified against command-code@0.44.1 Ms.buildHeaders / callServerAPI.
 	ccSetLowerHeader(req, "x-cli-environment", ccHeaderProdEnv)
-	ccSetLowerHeader(req, "x-command-code-version", ccHeaderVersion)
-	ccSetLowerHeader(req, "x-session-id", uuid.New().String())
+	ccSetLowerHeader(req, "x-command-code-version", helps.CCCLIVersion)
+	// Stable session id per apiKey (CLI reuses one session for the process).
+	// Override via auth attributes/metadata "session_id" when needed.
+	sessionID := e.resolveString(auth, "session_id", "")
+	if sessionID == "" {
+		sessionID = helps.CCSessionIDFor(apiKey)
+	}
+	ccSetLowerHeader(req, "x-session-id", sessionID)
 	ccSetLowerHeader(req, "x-project-slug", e.resolveString(auth, "project_slug", ccDefaultProjectSlug))
 	ccSetLowerHeader(req, "x-taste-learning", e.resolveString(auth, "taste_learning", "true"))
-	ccSetLowerHeader(req, "x-co-flag", "false")
+	// INTERNAL_TEAM_FLAG_HEADER = x-co-flag (obfuscated as `x-${"--co".replace("--","")}-flag`).
+	// isOAuthEnforced() → false for normal API-key usage.
+	ccSetLowerHeader(req, "x-co-flag", e.resolveString(auth, "co_flag", "false"))
 	if tp := ccGenerateTraceparent(); tp != "" {
 		ccSetLowerHeader(req, "traceparent", tp)
 	}

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
@@ -465,8 +466,8 @@ func TestCommandCodeExecutor_injectHeaders_CLIpfingerprint(t *testing.T) {
 		}
 	}
 
-	if got := getLower("x-command-code-version"); got != "0.44.1" {
-		t.Errorf("x-command-code-version = %q, want 0.44.1", got)
+	if got := getLower("x-command-code-version"); got != helps.CCCLIVersion {
+		t.Errorf("x-command-code-version = %q, want %s", got, helps.CCCLIVersion)
 	}
 	if got := getLower("x-cli-environment"); got != "production" {
 		t.Errorf("x-cli-environment = %q, want production", got)
@@ -508,6 +509,16 @@ func TestCommandCodeExecutor_injectHeaders_CLIpfingerprint(t *testing.T) {
 	exec.injectHeaders(streamReq, auth, true)
 	if got := getLowerFromReq(streamReq, "accept-encoding"); got != "identity" {
 		t.Errorf("stream accept-encoding = %q, want identity", got)
+	}
+
+	// Session id must be stable across requests for the same api key
+	// (official CLI reuses one session for the process lifetime).
+	session1 := getLower("x-session-id")
+	httpReq2, _ := http.NewRequest(http.MethodPost, "https://api.commandcode.ai/alpha/generate", nil)
+	exec.injectHeaders(httpReq2, auth, false)
+	session2 := getLowerFromReq(httpReq2, "x-session-id")
+	if session1 == "" || session1 != session2 {
+		t.Errorf("x-session-id not stable across requests: %q vs %q", session1, session2)
 	}
 }
 
