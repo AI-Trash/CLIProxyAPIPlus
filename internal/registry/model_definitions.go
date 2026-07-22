@@ -290,9 +290,9 @@ func upsertModelInfos(models []*ModelInfo, extras ...*ModelInfo) []*ModelInfo {
 }
 
 // GetCommandCodeModels returns the available model definitions for Command Code.
-// Synced from command-code@0.44.1 (npm) model catalog (Kt in dist/cli.mjs).
+// Synced from command-code@0.52.5 (npm) model catalog (Kt in dist/cli.mjs).
 // Anthropic/OpenAI entries use the Ot billing full-id form (provider:name);
-// open-source entries use the Kt canonical path form (org/name).
+// open-source / gateway entries use the Kt canonical path form (org/name).
 func GetCommandCodeModels() []*ModelInfo {
 	now := int64(1732752000)
 	ep := []string{"/chat/completions", "/responses"}
@@ -323,6 +323,7 @@ func GetCommandCodeModels() []*ModelInfo {
 		// ── Open-source / gateway models (Kt canonical ids) ──
 		cc("deepseek/deepseek-v4-pro", "DeepSeek V4 Pro", "DeepSeek V4 Pro via Command Code", 1000000),
 		cc("deepseek/deepseek-v4-flash", "DeepSeek V4 Flash", "DeepSeek V4 Flash via Command Code", 1000000),
+		cc("moonshotai/Kimi-K3", "Kimi K3", "Moonshot Kimi K3 via Command Code", 1000000),
 		cc("moonshotai/Kimi-K2.7-Code", "Kimi K2.7 Code", "Moonshot Kimi K2.7 Code via Command Code", 256000),
 		cc("moonshotai/Kimi-K2.7-Code-Highspeed", "Kimi K2.7 Code Highspeed", "Moonshot Kimi K2.7 Code Highspeed via Command Code", 262000),
 		cc("moonshotai/Kimi-K2.6", "Kimi K2.6", "Moonshot Kimi K2.6 via Command Code", 256000),
@@ -343,10 +344,14 @@ func GetCommandCodeModels() []*ModelInfo {
 		cc("stepfun/Step-3.7-Flash", "Step 3.7 Flash", "StepFun Step 3.7 Flash via Command Code", 256000),
 		cc("stepfun/Step-3.5-Flash", "Step 3.5 Flash", "StepFun Step 3.5 Flash via Command Code", 1000000),
 		cc("tencent/Hy3", "Tencent Hy3", "Tencent Hy3 via Command Code", 262144),
+		cc("google/gemini-3.6-flash", "Gemini 3.6 Flash", "Google Gemini 3.6 Flash via Command Code", 1000000),
 		cc("google/gemini-3.5-flash", "Gemini 3.5 Flash", "Google Gemini 3.5 Flash via Command Code", 1000000),
+		cc("google/gemini-3.5-flash-lite", "Gemini 3.5 Flash Lite", "Google Gemini 3.5 Flash Lite via Command Code", 1000000),
 		cc("google/gemini-3.1-flash-lite", "Gemini 3.1 Flash Lite", "Google Gemini 3.1 Flash Lite via Command Code", 1000000),
 		cc("sakana/fugu-ultra", "Fugu Ultra", "Sakana Fugu Ultra via Command Code", 1000000),
 		cc("nvidia/nemotron-3-ultra-550b-a55b", "Nemotron 3 Ultra", "NVIDIA Nemotron 3 Ultra via Command Code", 1000000),
+		cc("thinkingmachines/inkling", "Inkling", "Thinking Machines Inkling via Command Code", 256000),
+		cc("poolside/laguna-s-2.1-free", "Laguna S 2.1", "Poolside Laguna S 2.1 (free) via Command Code", 256000),
 		cc("meta/muse-spark-1.1", "Muse Spark 1.1", "Meta Muse Spark 1.1 via Command Code", 1048576),
 		cc("xai/grok-4.5", "Grok 4.5", "xAI Grok 4.5 via Command Code", 500000),
 	}

@@ -80,6 +80,60 @@ func TestCommandCodeExecutor_ExecuteStream_CodexResponseFormat(t *testing.T) {
 	}
 }
 
+func TestCommandCodeExecutor_ExecuteStream_OpenAIFormatReasoning(t *testing.T) {
+	// command-code@0.52.5 stream events: reasoning-start/delta/end + text-delta + finish
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte(`{"type":"reasoning-start"}` + "\n"))
+		w.Write([]byte(`{"type":"reasoning-delta","text":"thinking..."}` + "\n"))
+		w.Write([]byte(`{"type":"reasoning-end"}` + "\n"))
+		w.Write([]byte(`{"type":"text-delta","text":"done"}` + "\n"))
+		w.Write([]byte(`{"type":"finish","totalUsage":{"inputTokens":8,"outputTokens":3}}` + "\n"))
+	}))
+	defer upstream.Close()
+
+	exec := NewCommandCodeExecutor(&config.Config{})
+	auth := &cliproxyauth.Auth{
+		ID:         "test-auth",
+		Provider:   "commandcode",
+		Metadata:   map[string]any{"api_key": "test-key", "base_url": upstream.URL},
+		Attributes: map[string]string{"base_url": upstream.URL},
+	}
+
+	req := cliproxyexecutor.Request{
+		Model:   "deepseek/deepseek-v4-pro",
+		Payload: []byte(`{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hi"}],"stream":true}`),
+	}
+	opts := cliproxyexecutor.Options{
+		Stream:          true,
+		SourceFormat:    sdktranslator.FromString("openai"),
+		OriginalRequest: req.Payload,
+	}
+
+	result, err := exec.ExecuteStream(context.Background(), auth, req, opts)
+	if err != nil {
+		t.Fatalf("ExecuteStream failed: %v", err)
+	}
+
+	var chunks []string
+	for ch := range result.Chunks {
+		if ch.Err != nil {
+			t.Fatalf("stream error: %v", ch.Err)
+		}
+		if ch.Payload != nil {
+			chunks = append(chunks, string(ch.Payload))
+		}
+	}
+
+	joined := strings.Join(chunks, "\n")
+	if !strings.Contains(joined, `"reasoning_content":"thinking..."`) {
+		t.Errorf("missing reasoning_content delta\nGot:\n%s", joined)
+	}
+	if !strings.Contains(joined, `"delta":{"content":"done"}`) {
+		t.Errorf("missing content delta\nGot:\n%s", joined)
+	}
+}
+
 func TestCommandCodeExecutor_ExecuteStream_OpenAIFormat(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -478,6 +532,18 @@ func TestCommandCodeExecutor_injectHeaders_CLIpfingerprint(t *testing.T) {
 	if got := getLower("x-co-flag"); got != "false" {
 		t.Errorf("x-co-flag = %q, want false", got)
 	}
+	// Optional headers from command-code@0.52.5: only sent when configured.
+	if got := getLower("x-oss-primary-provider"); got != "" {
+		t.Errorf("x-oss-primary-provider = %q, want empty by default", got)
+	}
+	if got := getLower("x-cmd-zdr"); got != "" {
+		t.Errorf("x-cmd-zdr = %q, want empty by default", got)
+	}
+	// x-project-slug should match the seeded session project name (not a hard-coded
+	// "workspace" when session context is available).
+	if got := getLower("x-project-slug"); got == "" {
+		t.Errorf("x-project-slug is empty")
+	}
 	// Non-stream requests should send full accept-encoding (matching undici).
 	if got := getLower("accept-encoding"); got != "gzip, deflate, br" {
 		t.Errorf("accept-encoding = %q, want \"gzip, deflate, br\"", got)
@@ -519,6 +585,25 @@ func TestCommandCodeExecutor_injectHeaders_CLIpfingerprint(t *testing.T) {
 	session2 := getLowerFromReq(httpReq2, "x-session-id")
 	if session1 == "" || session1 != session2 {
 		t.Errorf("x-session-id not stable across requests: %q vs %q", session1, session2)
+	}
+
+	// Optional headers when auth attributes are set (mirrors env flags in CLI).
+	authWithOpts := &cliproxyauth.Auth{
+		ID:       "test-auth-opts",
+		Provider: "commandcode",
+		Attributes: map[string]string{
+			"api_key":              "test-key",
+			"oss_primary_provider": "openrouter",
+			"cmd_zdr":              "1",
+		},
+	}
+	httpReq3, _ := http.NewRequest(http.MethodPost, "https://api.commandcode.ai/alpha/generate", nil)
+	exec.injectHeaders(httpReq3, authWithOpts, false)
+	if got := getLowerFromReq(httpReq3, "x-oss-primary-provider"); got != "openrouter" {
+		t.Errorf("x-oss-primary-provider = %q, want openrouter", got)
+	}
+	if got := getLowerFromReq(httpReq3, "x-cmd-zdr"); got != "1" {
+		t.Errorf("x-cmd-zdr = %q, want 1", got)
 	}
 }
 
