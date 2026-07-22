@@ -92,21 +92,47 @@ func (e *CommandCodeExecutor) injectHeaders(req *http.Request, auth *cliproxyaut
 	}
 
 	// CLI fingerprint headers — the official CLI sets these in lowercase.
-	// Verified against command-code@0.44.1 Ms.buildHeaders / callServerAPI.
+	// Verified against command-code@0.52.5 Ms.buildHeaders / callServerAPI.
+	// Header set: x-cli-environment, x-command-code-version, x-session-id,
+	// x-project-slug, x-taste-learning, x-co-flag (INTERNAL_TEAM_FLAG_HEADER),
+	// optional x-oss-primary-provider / x-cmd-zdr, traceparent, User-Agent:cli.
 	ccSetLowerHeader(req, "x-cli-environment", ccHeaderProdEnv)
 	ccSetLowerHeader(req, "x-command-code-version", helps.CCCLIVersion)
 	// Stable session id per apiKey (CLI reuses one session for the process).
 	// Override via auth attributes/metadata "session_id" when needed.
+	// Official CLI: addGenerateSessionHeader uses body.threadId or randomUUID;
+	// main chat path always supplies e.sessionId so we mirror a stable id.
 	sessionID := e.resolveString(auth, "session_id", "")
 	if sessionID == "" {
 		sessionID = helps.CCSessionIDFor(apiKey)
 	}
 	ccSetLowerHeader(req, "x-session-id", sessionID)
-	ccSetLowerHeader(req, "x-project-slug", e.resolveString(auth, "project_slug", ccDefaultProjectSlug))
+	// Official CLI: x-project-slug = getCurrentProjectDirName() (cwd slug).
+	// Prefer auth override, else the seeded session project name so header and
+	// body config stay coherent for the same apiKey.
+	projectSlug := e.resolveString(auth, "project_slug", "")
+	if projectSlug == "" {
+		if sc := helps.CCSessionContextFor(apiKey); sc != nil && sc.ProjectSlug != "" {
+			projectSlug = sc.ProjectSlug
+		}
+	}
+	if projectSlug == "" {
+		projectSlug = ccDefaultProjectSlug
+	}
+	ccSetLowerHeader(req, "x-project-slug", projectSlug)
 	ccSetLowerHeader(req, "x-taste-learning", e.resolveString(auth, "taste_learning", "true"))
 	// INTERNAL_TEAM_FLAG_HEADER = x-co-flag (obfuscated as `x-${"--co".replace("--","")}-flag`).
 	// isOAuthEnforced() → false for normal API-key usage.
 	ccSetLowerHeader(req, "x-co-flag", e.resolveString(auth, "co_flag", "false"))
+	// OSS_PRIMARY_PROVIDER: set when process.env.OSS_PRIMARY_PROVIDER is set.
+	// Conditional in the official CLI, so optional here (defaults to not sent).
+	if ossProv := e.resolveString(auth, "oss_primary_provider", ""); ossProv != "" {
+		ccSetLowerHeader(req, "x-oss-primary-provider", ossProv)
+	}
+	// CMD_ZDR: official CLI sends x-cmd-zdr: "1" only when process.env.CMD_ZDR==="1".
+	if zdr := e.resolveString(auth, "cmd_zdr", ""); zdr == "1" {
+		ccSetLowerHeader(req, "x-cmd-zdr", "1")
+	}
 	if tp := ccGenerateTraceparent(); tp != "" {
 		ccSetLowerHeader(req, "traceparent", tp)
 	}
@@ -438,6 +464,20 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 				// Build OpenAI SSE chunk, then translate to source format
 				chunk := buildCCChunk(text)
 				emitCommandCodeTranslatedStreamChunk(ctx, out, to, responseFormat, req.Model, opts.OriginalRequest, translated, chunk, &param)
+
+			case chunkType == "reasoning-delta":
+				// command-code@0.52.5 consumeSSEStream handles reasoning-start /
+				// reasoning-delta / reasoning-end. Forward deltas as OpenAI
+				// reasoning_content so clients that surface thinking see it.
+				text := gjson.GetBytes(line, "text").String()
+				if text == "" {
+					continue
+				}
+				chunk := buildCCReasoningChunk(text)
+				emitCommandCodeTranslatedStreamChunk(ctx, out, to, responseFormat, req.Model, opts.OriginalRequest, translated, chunk, &param)
+
+			case chunkType == "reasoning-start", chunkType == "reasoning-end":
+				// Lifecycle markers — no payload to forward.
 
 			case chunkType == "tool-call":
 				id := gjson.GetBytes(line, "toolCallId").String()
@@ -1036,6 +1076,12 @@ func buildCCChunk(text string) []byte {
 	return []byte(fmt.Sprintf(`data: {"id":"chatcmpl-cc","object":"chat.completion.chunk","created":0,"model":"commandcode","choices":[{"index":0,"delta":{"content":%s},"finish_reason":null}]}`, ccEncode(text)))
 }
 
+// buildCCReasoningChunk emits an OpenAI-style reasoning_content delta for
+// command-code "reasoning-delta" stream events (added in recent CLI releases).
+func buildCCReasoningChunk(text string) []byte {
+	return []byte(fmt.Sprintf(`data: {"id":"chatcmpl-cc","object":"chat.completion.chunk","created":0,"model":"commandcode","choices":[{"index":0,"delta":{"reasoning_content":%s},"finish_reason":null}]}`, ccEncode(text)))
+}
+
 func buildCCToolCallChunk(index int, id, name, arguments string) []byte {
 	return []byte(fmt.Sprintf(`data: {"id":"chatcmpl-cc","object":"chat.completion.chunk","created":0,"model":"commandcode","choices":[{"index":0,"delta":{"tool_calls":[{"index":%d,"id":%s,"type":"function","function":{"name":%s,"arguments":%s}}]},"finish_reason":null}]}`,
 		index, ccEncode(id), ccEncode(name), ccEncode(arguments)))
@@ -1113,6 +1159,7 @@ var errStreamAborted = errors.New("commandcode: stream aborted")
 func (e *CommandCodeExecutor) aggregateStreamToOpenAI(ctx context.Context, body io.Reader) ([]byte, usage.Detail, string, error) {
 	var (
 		accText          strings.Builder
+		accReasoning     strings.Builder
 		toolCalls        []map[string]any
 		promptTokens     int64
 		completionTokens int64
@@ -1142,6 +1189,14 @@ func (e *CommandCodeExecutor) aggregateStreamToOpenAI(ctx context.Context, body 
 			if text := gjson.GetBytes(line, "text").String(); text != "" {
 				accText.WriteString(text)
 			}
+
+		case "reasoning-delta":
+			if text := gjson.GetBytes(line, "text").String(); text != "" {
+				accReasoning.WriteString(text)
+			}
+
+		case "reasoning-start", "reasoning-end":
+			// Lifecycle markers — accumulated via reasoning-delta.
 
 		case "tool-call":
 			sawToolCall = true
@@ -1192,7 +1247,7 @@ func (e *CommandCodeExecutor) aggregateStreamToOpenAI(ctx context.Context, body 
 			abortErr = errStreamAborted
 
 		default:
-			// reasoning/tool events — skip
+			// tool-result and other non-content events — skip
 		}
 	}
 
@@ -1220,6 +1275,9 @@ func (e *CommandCodeExecutor) aggregateStreamToOpenAI(ctx context.Context, body 
 	message := map[string]any{
 		"role":    "assistant",
 		"content": accText.String(),
+	}
+	if reasoning := accReasoning.String(); reasoning != "" {
+		message["reasoning_content"] = reasoning
 	}
 	if len(toolCalls) > 0 {
 		message["tool_calls"] = toolCalls
