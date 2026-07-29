@@ -518,38 +518,46 @@ nonstream-keepalive-interval: 0
 #   3. Or manually create a JSON file in the auths/ directory:
 #      {"type": "commandcode", "api_key": "cc_...", "email": "user@example.com"}
 #
-# Model aliases (mapping canonical IDs to friendly names):
+# Model aliases (synced from command-code@1.4.6).
+# name  = upstream / registry id (canonical wire form sent to /alpha/generate)
+# alias = client-facing short name
+# Claude/GPT bare ids are already the wire form; aliases mainly shorten
+# org/name gateway ids and dated haiku, and accept legacy billing prefixes.
 # oauth-model-alias:
 #   commandcode:
 #     ── Claude (premium, Pro+ plans) ──
-#     - name: "anthropic:claude-sonnet-5"
-#       alias: "claude-sonnet-5"
-#     - name: "anthropic:claude-sonnet-4-6"
-#       alias: "claude-sonnet-4-6"
-#     - name: "anthropic:claude-fable-5"
-#       alias: "claude-fable-5"
-#     - name: "anthropic:claude-opus-4-8"
-#       alias: "claude-opus-4-8"
-#     - name: "anthropic:claude-opus-4-7"
-#       alias: "claude-opus-4-7"
-#     - name: "anthropic:claude-haiku-4-5-20251001"
+#     - name: "claude-sonnet-5"
+#       alias: "anthropic:claude-sonnet-5"
+#     - name: "claude-sonnet-4-6"
+#       alias: "anthropic:claude-sonnet-4-6"
+#     - name: "claude-fable-5"
+#       alias: "anthropic:claude-fable-5"
+#     - name: "claude-opus-5"
+#       alias: "anthropic:claude-opus-5"
+#     - name: "claude-opus-4-8"
+#       alias: "anthropic:claude-opus-4-8"
+#     - name: "claude-opus-4-7"
+#       alias: "anthropic:claude-opus-4-7"
+#     - name: "claude-haiku-4-5-20251001"
 #       alias: "claude-haiku-4-5"
+#     - name: "claude-haiku-4-5-20251001"
+#       alias: "anthropic:claude-haiku-4-5-20251001"
 #     ── GPT (premium, Pro+ plans) ──
-#     - name: "openai:gpt-5.6-sol"
-#       alias: "gpt-5.6-sol"
-#     - name: "openai:gpt-5.6-terra"
-#       alias: "gpt-5.6-terra"
-#     - name: "openai:gpt-5.6-luna"
-#       alias: "gpt-5.6-luna"
-#     - name: "openai:gpt-5.5"
-#       alias: "gpt-5.5"
-#     - name: "openai:gpt-5.4"
-#       alias: "gpt-5.4"
-#     - name: "openai:gpt-5.3-codex"
-#       alias: "gpt-5.3-codex"
-#     - name: "openai:gpt-5.4-mini"
-#       alias: "gpt-5.4-mini"
-#     ── DeepSeek (Go-plan, 75% off permanently) ──
+#     - name: "gpt-5.6-sol"
+#       alias: "openai:gpt-5.6-sol"
+#     - name: "gpt-5.6-terra"
+#       alias: "openai:gpt-5.6-terra"
+#     - name: "gpt-5.6-luna"
+#       alias: "openai:gpt-5.6-luna"
+#     - name: "gpt-5.5"
+#       alias: "openai:gpt-5.5"
+#     - name: "gpt-5.4"
+#       alias: "openai:gpt-5.4"
+#     - name: "gpt-5.3-codex"
+#       alias: "openai:gpt-5.3-codex"
+#     - name: "gpt-5.4-mini"
+#       alias: "openai:gpt-5.4-mini"
+#     ── DeepSeek (Go-plan) ──
 #     - name: "deepseek/deepseek-v4-pro"
 #       alias: "deepseek-v4-pro"
 #     - name: "deepseek/deepseek-v4-flash"
@@ -581,7 +589,7 @@ nonstream-keepalive-interval: 0
 #       alias: "minimax-m2.7"
 #     - name: "MiniMaxAI/MiniMax-M2.5"
 #       alias: "minimax-m2.5"
-#     ── MiMo (Go-plan, 98-99% off) ──
+#     ── MiMo (Go-plan) ──
 #     - name: "xiaomi/mimo-v2.5-pro"
 #       alias: "mimo-v2.5-pro"
 #     - name: "xiaomi/mimo-v2.5"
@@ -591,6 +599,8 @@ nonstream-keepalive-interval: 0
 #       alias: "qwen-3.7-max"
 #     - name: "Qwen/Qwen3.7-Plus"
 #       alias: "qwen-3.7-plus"
+#     - name: "Qwen/Qwen3.7-Flash"
+#       alias: "qwen-3.7-flash"
 #     - name: "Qwen/Qwen3.6-Max-Preview"
 #       alias: "qwen-3.6-max-preview"
 #     - name: "Qwen/Qwen3.6-Plus"
@@ -600,9 +610,11 @@ nonstream-keepalive-interval: 0
 #       alias: "step-3.7-flash"
 #     - name: "stepfun/Step-3.5-Flash"
 #       alias: "step-3.5-flash"
-#     ── Tencent (Go-plan) ──
-#     - name: "tencent/Hy3"
+#     ── Tencent (Go-plan, paid) ──
+#     - name: "tencent/hy3-paid"
 #       alias: "tencent-hy3"
+#     - name: "tencent/hy3-paid"
+#       alias: "hy3"
 #     ── Gemini (Pro+ plans) ──
 #     - name: "google/gemini-3.6-flash"
 #       alias: "gemini-3.6-flash"
@@ -621,6 +633,8 @@ nonstream-keepalive-interval: 0
 #       alias: "inkling"
 #     - name: "poolside/laguna-s-2.1-free"
 #       alias: "laguna-s-2.1"
+#     - name: "inclusionai/ling-3.0-flash-free"
+#       alias: "ling-3.0-flash"
 #     - name: "meta/muse-spark-1.1"
 #       alias: "muse-spark-1.1"
 #     - name: "xai/grok-4.5"
