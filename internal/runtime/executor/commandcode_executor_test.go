@@ -81,7 +81,7 @@ func TestCommandCodeExecutor_ExecuteStream_CodexResponseFormat(t *testing.T) {
 }
 
 func TestCommandCodeExecutor_ExecuteStream_OpenAIFormatReasoning(t *testing.T) {
-	// command-code@0.52.5 stream events: reasoning-start/delta/end + text-delta + finish
+	// command-code@1.4.6 stream events: reasoning-start/delta/end + text-delta + finish
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Write([]byte(`{"type":"reasoning-start"}` + "\n"))
@@ -399,6 +399,7 @@ func TestCommandCodeExecutor_buildRequestBody(t *testing.T) {
 
 	tests := []struct {
 		name        string
+		model       string
 		payload     string
 		srcFormat   string
 		contains    []string
@@ -420,7 +421,7 @@ func TestCommandCodeExecutor_buildRequestBody(t *testing.T) {
 			name:        "body shape matches official CLI",
 			payload:     `{"model":"test","messages":[{"role":"user","content":"hi"}],"stream":true}`,
 			srcFormat:   "openai",
-			contains:    []string{`"permissionMode":"standard"`, `Node.js`, `"tools":[]`, `"memory":null`, `"taste":null`, `"skills":null`},
+			contains:    []string{`"permissionMode":"standard"`, `Node.js`, `"tools":[]`, `"memory":null`, `"taste":null`, `"skills":null`, `"threadId":`},
 			notContains: []string{`"mode":"tool-desc"`, `"environment":"production"`, `"temperature"`},
 		},
 		{
@@ -439,10 +440,22 @@ func TestCommandCodeExecutor_buildRequestBody(t *testing.T) {
 			name:      "openai tools passed through",
 			payload:   `{"model":"test","messages":[{"role":"user","content":"inspect"}],"stream":true,"tools":[{"type":"function","function":{"name":"list_files","description":"List files","parameters":{"type":"object","properties":{"path":{"type":"string"}}}}}],"tool_choice":"auto","parallel_tool_calls":true}`,
 			srcFormat: "openai",
+			// command-code@1.4.6 toWireTools: {name, description, input_schema} only (no type:function)
 			contains: []string{
-				`"tools":[{"type":"function","name":"list_files","description":"List files","input_schema":{"type":"object","properties":{"path":{"type":"string"}}}}]`,
+				`"name":"list_files"`,
+				`"description":"List files"`,
+				`"input_schema":{"type":"object","properties":{"path":{"type":"string"}}}`,
 				`"parallel_tool_calls":true`,
 			},
+			notContains: []string{`"type":"function","name":"list_files"`},
+		},
+		{
+			name:        "billing model prefix stripped to canonical",
+			model:       "anthropic:claude-sonnet-5",
+			payload:     `{"model":"anthropic:claude-sonnet-5","messages":[{"role":"user","content":"hi"}],"stream":true}`,
+			srcFormat:   "openai",
+			contains:    []string{`"model":"claude-sonnet-5"`},
+			notContains: []string{`"model":"anthropic:claude-sonnet-5"`},
 		},
 		{
 			name:      "object tool choice passed through",
@@ -467,8 +480,12 @@ func TestCommandCodeExecutor_buildRequestBody(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			model := tt.model
+			if model == "" {
+				model = "deepseek/deepseek-v4-pro"
+			}
 			req := cliproxyexecutor.Request{
-				Model:   "deepseek/deepseek-v4-pro",
+				Model:   model,
 				Payload: []byte(tt.payload),
 			}
 			opts := cliproxyexecutor.Options{
@@ -488,6 +505,26 @@ func TestCommandCodeExecutor_buildRequestBody(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestCanonicalizeCommandCodeModel(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"claude-sonnet-5", "claude-sonnet-5"},
+		{"anthropic:claude-sonnet-5", "claude-sonnet-5"},
+		{"openai:gpt-5.6-sol", "gpt-5.6-sol"},
+		{"claude-haiku-4-5", "claude-haiku-4-5-20251001"},
+		{"claude-opus-4-6", "claude-opus-4-7"},
+		{"deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-pro"},
+		{"anthropic:claude-sonnet-5(high)", "claude-sonnet-5(high)"},
+	}
+	for _, tt := range tests {
+		if got := canonicalizeCommandCodeModel(tt.in); got != tt.want {
+			t.Errorf("canonicalizeCommandCodeModel(%q) = %q, want %q", tt.in, got, tt.want)
+		}
 	}
 }
 
@@ -532,7 +569,7 @@ func TestCommandCodeExecutor_injectHeaders_CLIpfingerprint(t *testing.T) {
 	if got := getLower("x-co-flag"); got != "false" {
 		t.Errorf("x-co-flag = %q, want false", got)
 	}
-	// Optional headers from command-code@0.52.5: only sent when configured.
+	// Optional headers from command-code@1.4.6: only sent when configured.
 	if got := getLower("x-oss-primary-provider"); got != "" {
 		t.Errorf("x-oss-primary-provider = %q, want empty by default", got)
 	}
