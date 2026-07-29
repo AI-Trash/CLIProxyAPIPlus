@@ -19,13 +19,14 @@ import (
 // CCCLIVersion is the official command-code CLI version we fingerprint as.
 // Keep this in lockstep with https://www.npmjs.com/package/command-code (latest).
 // Used for x-command-code-version on generate, fingerprint/record, and login.
-const CCCLIVersion = "0.52.5"
+// Synced from command-code@1.4.6 (package.json / dist/cli.mjs package version).
+const CCCLIVersion = "1.4.6"
 
 // ccFingerprintSalt is the device-fingerprint salt embedded in the official
 // command-code CLI (>=0.40.x). It is publicly visible in the npm bundle and
 // is required to compute a thumbmark that the server can verify against
 // incoming /alpha/fingerprint/record submissions.
-// Verified against command-code@0.52.5 dist/cli.mjs (var Bw="command-code:device-fingerprint:v1").
+// Verified against command-code@1.4.6 dist/cli.mjs (fk="command-code:device-fingerprint:v1").
 const ccFingerprintSalt = "command-code:device-fingerprint:v1"
 
 // ccFingerprint is the payload posted to /alpha/fingerprint/record. The
@@ -520,8 +521,8 @@ func RecordFingerprintIfNeeded(baseURL, apiKey string) {
 	}()
 }
 
-// applyFingerprintHeaders sets the same headers the official CLI's Ms client
-// attaches to /alpha/fingerprint/record (buildHeaders in command-code@0.52.5).
+// applyFingerprintHeaders sets the same headers the official CLI attaches to
+// /alpha/fingerprint/record (recordCliFingerprint in command-code@1.4.6).
 // Keys are stored lowercase to match Node fetch/undici over HTTP/1.1.
 func applyFingerprintHeaders(req *http.Request, apiKey string) {
 	setLower := func(key, value string) {

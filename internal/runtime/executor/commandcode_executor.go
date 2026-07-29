@@ -92,7 +92,7 @@ func (e *CommandCodeExecutor) injectHeaders(req *http.Request, auth *cliproxyaut
 	}
 
 	// CLI fingerprint headers — the official CLI sets these in lowercase.
-	// Verified against command-code@0.52.5 Ms.buildHeaders / callServerAPI.
+	// Verified against command-code@1.4.6 buildCommandAuthHeaders / createApiClient.
 	// Header set: x-cli-environment, x-command-code-version, x-session-id,
 	// x-project-slug, x-taste-learning, x-co-flag (INTERNAL_TEAM_FLAG_HEADER),
 	// optional x-oss-primary-provider / x-cmd-zdr, traceparent, User-Agent:cli.
@@ -466,7 +466,7 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 				emitCommandCodeTranslatedStreamChunk(ctx, out, to, responseFormat, req.Model, opts.OriginalRequest, translated, chunk, &param)
 
 			case chunkType == "reasoning-delta":
-				// command-code@0.52.5 consumeSSEStream handles reasoning-start /
+				// command-code@1.4.6 consumeStream handles reasoning-start /
 				// reasoning-delta / reasoning-end. Forward deltas as OpenAI
 				// reasoning_content so clients that surface thinking see it.
 				text := gjson.GetBytes(line, "text").String()
@@ -638,7 +638,10 @@ func (e *CommandCodeExecutor) buildHTTPRequest(ctx context.Context, baseURL, end
 
 func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opts cliproxyexecutor.Options, auth *cliproxyauth.Auth) []byte {
 	payload := req.Payload
-	model := req.Model
+	// Wire model IDs match command-code@1.4.6 catalog canonical form
+	// (bare Claude/GPT ids, org/name for gateway models) — not billing
+	// "provider:id" prefixes.
+	model := canonicalizeCommandCodeModel(req.Model)
 
 	// Use the proxy's built-in translator to convert from source format to
 	// OpenAI format — this properly resolves content nesting.
@@ -666,6 +669,7 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 		maxTokens = gjson.GetBytes(translated, "max_completion_tokens").Int()
 	}
 	if maxTokens == 0 {
+		// Official CLI default: CS=64e3 in command-code@1.4.6.
 		maxTokens = 64000
 	}
 
@@ -677,25 +681,20 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 		sysPrompt = gjson.GetBytes(payload, "instructions").String()
 	}
 
-	// Params mirror the official CLI's callServerAPI: model, messages, tools,
-	// system, max_tokens, stream. The CLI ALWAYS sends "stream":true — the
-	// /alpha/generate endpoint is a streaming endpoint and "stream":false is
-	// detected as a proxy signal.
+	// Params mirror command-code@1.4.6 postStream body.params: model, messages,
+	// tools, system, max_tokens, stream (always true). Optional temperature /
+	// reasoning_effort are added below when present.
 	params := fmt.Sprintf(`"model":%s,"messages":%s,"tools":%s,"max_tokens":%d,"stream":true`,
 		ccEncode(model), messages, convertToolsForCC(translated), maxTokens)
 
-	// Body shape mirrors the official command-code CLI's callServerAPI request:
-	// no "mode" field for regular chat, permissionMode present, and
+	// Body shape mirrors command-code@1.4.6 transport.postStream({route:vS,body}):
+	// config + memory/taste/skills null + permissionMode + optional threadId
+	// (UUID only) + params. No "mode" for regular chat (CLI omits when unset).
 	// config.environment is the OS/Node.js info string (NOT "production", which
-	// is the x-cli-environment header value instead). memory/taste/skills use
-	// JSON null (not empty string) when absent, matching the `??null` pattern.
+	// is the x-cli-environment header value instead).
 	//
-	// Git-related fields (workingDir, structure, isGitRepo, currentBranch,
-	// mainBranch, gitStatus, recentCommits) are seeded from a per-apiKey RNG
-	// so they stay stable across requests in the same process but vary per
-	// account. This matches what a real CLI looks like to the server: a
-	// coherent "developer workstation" with a single git project, as opposed
-	// to the obvious telltale of empty-string placeholders.
+	// Git-related fields are seeded from a per-apiKey RNG so they stay stable
+	// across requests in the same process but vary per account.
 	apiKey := e.resolveAPIKey(auth)
 	session := helps.CCSessionContextFor(apiKey)
 	structureJSON, _ := json.Marshal(session.Structure)
@@ -714,12 +713,25 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 		string(commitsJSON),
 	)
 
+	// Official CLI: threadId is included only when it is a valid UUID
+	// (toWireThreadId). Our per-apiKey session id is UUID-shaped.
+	sessionID := e.resolveString(auth, "session_id", "")
+	if sessionID == "" {
+		sessionID = helps.CCSessionIDFor(apiKey)
+	}
+	if ccIsUUID(sessionID) {
+		body, _ = sjson.Set(body, "threadId", sessionID)
+	}
+
 	if sysPrompt != "" {
 		body, _ = sjson.Set(body, "params.system", sysPrompt)
 	}
 
 	if cfg := gjson.GetBytes(translated, "reasoning_effort"); cfg.Exists() {
 		body, _ = sjson.Set(body, "params.reasoning_effort", cfg.Value())
+	}
+	if temp := gjson.GetBytes(translated, "temperature"); temp.Exists() {
+		body, _ = sjson.Set(body, "params.temperature", temp.Value())
 	}
 	if toolChoice := gjson.GetBytes(translated, "tool_choice"); toolChoice.Exists() && toolChoice.IsObject() {
 		body, _ = sjson.SetRaw(body, "params.tool_choice", toolChoice.Raw)
@@ -729,9 +741,74 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 	}
 
 	log.Infof("[commandcode] built request body: targetModel=%s srcFormat=%s bodyPreview=%s",
-		req.Model, opts.SourceFormat, summary([]byte(body), 400))
+		model, opts.SourceFormat, summary([]byte(body), 400))
 
 	return []byte(body)
+}
+
+// canonicalizeCommandCodeModel maps client/billing model ids to the canonical
+// form used by command-code@1.4.6 on the /alpha/generate wire (params.model).
+// Billing prefixes (anthropic:/openai:) are stripped; known deprecated ids are
+// rewritten to their replacements (rr/or maps in dist/cli.mjs).
+func canonicalizeCommandCodeModel(model string) string {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return model
+	}
+	// Preserve thinking/effort suffixes handled elsewhere; only rewrite the base.
+	parsed := thinking.ParseSuffix(model)
+	base := parsed.ModelName
+	if base == "" {
+		base = model
+	}
+	lower := strings.ToLower(base)
+	switch {
+	case strings.HasPrefix(lower, "anthropic:"):
+		base = base[len("anthropic:"):]
+	case strings.HasPrefix(lower, "openai:"):
+		base = base[len("openai:"):]
+	}
+	if repl, ok := commandCodeDeprecatedModels[strings.ToLower(base)]; ok {
+		base = repl
+	} else if repl, ok := commandCodeDeprecatedModels[base]; ok {
+		base = repl
+	}
+	if parsed.HasSuffix && parsed.RawSuffix != "" {
+		return base + "(" + parsed.RawSuffix + ")"
+	}
+	return base
+}
+
+// commandCodeDeprecatedModels mirrors command-code@1.4.6 rr/or replacement maps.
+var commandCodeDeprecatedModels = map[string]string{
+	"claude-sonnet-4-20250514":   "claude-sonnet-4-6",
+	"claude-sonnet-4-5-20250929": "claude-sonnet-4-6",
+	"claude-opus-4-5-20251101":   "claude-opus-4-7",
+	"claude-opus-4-6":            "claude-opus-4-7",
+	"claude-haiku-4-5":           "claude-haiku-4-5-20251001",
+	"tencent/hy3":                "tencent/Hy3", // case-normalize free id
+	"tencent/HY3":                "tencent/Hy3",
+}
+
+// ccIsUUID reports whether s looks like a UUID (8-4-4-4-12 hex), matching the
+// official CLI's toWireThreadId zod uuid check at a practical level.
+func ccIsUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i, c := range s {
+		switch i {
+		case 8, 13, 18, 23:
+			if c != '-' {
+				return false
+			}
+		default:
+			if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func summary(s []byte, n int) string {
@@ -956,6 +1033,8 @@ func convertToolsForCC(translated []byte) string {
 		return "[]"
 	}
 
+	// toWireTools in command-code@1.4.6 emits {name, description, input_schema}
+	// only — no "type":"function" wrapper field.
 	var converted []json.RawMessage
 	for _, tool := range tools.Array() {
 		name := tool.Get("function.name").String()
@@ -965,17 +1044,18 @@ func convertToolsForCC(translated []byte) string {
 			name = tool.Get("name").String()
 			description = tool.Get("description").String()
 			inputSchema = tool.Get("input_schema")
+			if !inputSchema.Exists() {
+				inputSchema = tool.Get("parameters")
+			}
 		}
 		if name == "" {
 			continue
 		}
 
-		item := []byte(`{"type":"function","name":"","description":"","input_schema":{}}`)
+		item := []byte(`{"name":"","input_schema":{}}`)
 		item, _ = sjson.SetBytes(item, "name", name)
 		if description != "" {
 			item, _ = sjson.SetBytes(item, "description", description)
-		} else {
-			item, _ = sjson.DeleteBytes(item, "description")
 		}
 		if inputSchema.Exists() && inputSchema.Raw != "" && inputSchema.Raw != "null" {
 			item, _ = sjson.SetRawBytes(item, "input_schema", []byte(inputSchema.Raw))
