@@ -290,7 +290,7 @@ func upsertModelInfos(models []*ModelInfo, extras ...*ModelInfo) []*ModelInfo {
 }
 
 // GetCommandCodeModels returns the available model definitions for Command Code.
-// Synced from command-code@1.4.6 (npm) model catalog (cI / nr in dist/cli.mjs)
+// Synced from command-code@1.6.0 (npm) model catalog (vI / kr in dist/cli.mjs)
 // and the generated knowledge reference models.md.
 //
 // IDs are the CLI canonical wire form used in /alpha/generate params.model:
@@ -356,6 +356,7 @@ func GetCommandCodeModels() []*ModelInfo {
 		cc("sakana/fugu-ultra", "Fugu Ultra", "Sakana Fugu Ultra via Command Code", 1000000),
 		cc("nvidia/nemotron-3-ultra-550b-a55b", "Nemotron 3 Ultra", "NVIDIA Nemotron 3 Ultra via Command Code", 1000000),
 		cc("thinkingmachines/inkling", "Inkling", "Thinking Machines Inkling via Command Code", 256000),
+		cc("thinkingmachines/inkling-small", "Inkling Small", "Thinking Machines Inkling Small via Command Code", 1000000),
 		cc("poolside/laguna-s-2.1-free", "Laguna S 2.1", "Poolside Laguna S 2.1 (free) via Command Code", 256000),
 		cc("inclusionai/ling-3.0-flash-free", "Ling 3.0 Flash", "InclusionAI Ling 3.0 Flash (free) via Command Code", 256000),
 		cc("meta/muse-spark-1.1", "Muse Spark 1.1", "Meta Muse Spark 1.1 via Command Code", 1048576),
