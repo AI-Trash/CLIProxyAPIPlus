@@ -540,7 +540,7 @@ nonstream-keepalive-interval: 0
 #   3. Or manually create a JSON file in the auths/ directory:
 #      {"type": "commandcode", "api_key": "cc_...", "email": "user@example.com"}
 #
-# Model aliases (synced from command-code@1.4.6).
+# Model aliases (synced from command-code@1.6.0).
 # name  = upstream / registry id (canonical wire form sent to /alpha/generate)
 # alias = client-facing short name
 # Claude/GPT bare ids are already the wire form; aliases mainly shorten
@@ -653,6 +653,8 @@ nonstream-keepalive-interval: 0
 #       alias: "fugu-ultra"
 #     - name: "thinkingmachines/inkling"
 #       alias: "inkling"
+#     - name: "thinkingmachines/inkling-small"
+#       alias: "inkling-small"
 #     - name: "poolside/laguna-s-2.1-free"
 #       alias: "laguna-s-2.1"
 #     - name: "inclusionai/ling-3.0-flash-free"
