@@ -81,14 +81,14 @@ func TestCommandCodeExecutor_ExecuteStream_CodexResponseFormat(t *testing.T) {
 }
 
 func TestCommandCodeExecutor_ExecuteStream_OpenAIFormatReasoning(t *testing.T) {
-	// command-code@1.4.6 stream events: reasoning-start/delta/end + text-delta + finish
+	// command-code@1.6.0 stream events: reasoning-start/delta/end + text-delta + finish
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Write([]byte(`{"type":"reasoning-start"}` + "\n"))
 		w.Write([]byte(`{"type":"reasoning-delta","text":"thinking..."}` + "\n"))
 		w.Write([]byte(`{"type":"reasoning-end"}` + "\n"))
 		w.Write([]byte(`{"type":"text-delta","text":"done"}` + "\n"))
-		w.Write([]byte(`{"type":"finish","totalUsage":{"inputTokens":8,"outputTokens":3}}` + "\n"))
+		w.Write([]byte(`{"type":"finish","totalUsage":{"inputTokens":8,"outputTokens":3,"inputTokenDetails":{"cacheReadTokens":5,"cacheWriteTokens":2}},"finishReason":"end_turn"}` + "\n"))
 	}))
 	defer upstream.Close()
 
@@ -359,7 +359,7 @@ func TestCommandCodeExecutor_Execute_NonStreamResponsesFormat(t *testing.T) {
 		// request and aggregates events internally.
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Write([]byte(`{"type":"text-delta","text":"Hello world"}` + "\n"))
-		w.Write([]byte(`{"type":"finish","totalUsage":{"inputTokens":10,"outputTokens":5,"totalTokens":15}}` + "\n"))
+		w.Write([]byte(`{"type":"finish","totalUsage":{"inputTokens":10,"outputTokens":5,"totalTokens":15,"inputTokenDetails":{"cacheReadTokens":3,"cacheWriteTokens":2}},"rawFinishReason":"end_turn"}` + "\n"))
 	}))
 	defer upstream.Close()
 
@@ -391,6 +391,58 @@ func TestCommandCodeExecutor_Execute_NonStreamResponsesFormat(t *testing.T) {
 	}
 	if got := gjson.GetBytes(result.Payload, "output.0.content.0.text").String(); got != "Hello world" {
 		t.Fatalf("output text = %q, want Hello world; payload=%s", got, string(result.Payload))
+	}
+}
+
+func TestCommandCodeExecutor_ExecuteStream_RawFinishReasonAndCacheWrite(t *testing.T) {
+	// command-code@1.6.0: finish event may carry rawFinishReason instead of
+	// finishReason, and inputTokenDetails.cacheWriteTokens.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte(`{"type":"text-delta","text":"hi"}` + "\n"))
+		w.Write([]byte(`{"type":"finish","totalUsage":{"inputTokens":9,"outputTokens":2,"inputTokenDetails":{"cacheReadTokens":4,"cacheWriteTokens":1}},"rawFinishReason":"end_turn"}` + "\n"))
+	}))
+	defer upstream.Close()
+
+	exec := NewCommandCodeExecutor(&config.Config{})
+	auth := &cliproxyauth.Auth{
+		ID:         "test-auth",
+		Provider:   "commandcode",
+		Metadata:   map[string]any{"api_key": "test-key", "base_url": upstream.URL},
+		Attributes: map[string]string{"base_url": upstream.URL},
+	}
+
+	req := cliproxyexecutor.Request{
+		Model:   "deepseek-v4-pro",
+		Payload: []byte(`{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hi"}],"stream":true}`),
+	}
+	opts := cliproxyexecutor.Options{
+		Stream:          true,
+		SourceFormat:    sdktranslator.FromString("openai"),
+		OriginalRequest: req.Payload,
+	}
+
+	result, err := exec.ExecuteStream(context.Background(), auth, req, opts)
+	if err != nil {
+		t.Fatalf("ExecuteStream failed: %v", err)
+	}
+
+	var chunks []string
+	for ch := range result.Chunks {
+		if ch.Err != nil {
+			t.Fatalf("stream error: %v", ch.Err)
+		}
+		if ch.Payload != nil {
+			chunks = append(chunks, string(ch.Payload))
+		}
+	}
+
+	joined := strings.Join(chunks, "\n")
+	if !strings.Contains(joined, `"finish_reason":"stop"`) {
+		t.Errorf("missing finish_reason from rawFinishReason fallback\nGot:\n%s", joined)
+	}
+	if !strings.Contains(joined, `"prompt_tokens_details":{"cached_tokens":4}`) {
+		t.Errorf("missing cached token usage\nGot:\n%s", joined)
 	}
 }
 
@@ -440,7 +492,7 @@ func TestCommandCodeExecutor_buildRequestBody(t *testing.T) {
 			name:      "openai tools passed through",
 			payload:   `{"model":"test","messages":[{"role":"user","content":"inspect"}],"stream":true,"tools":[{"type":"function","function":{"name":"list_files","description":"List files","parameters":{"type":"object","properties":{"path":{"type":"string"}}}}}],"tool_choice":"auto","parallel_tool_calls":true}`,
 			srcFormat: "openai",
-			// command-code@1.4.6 toWireTools: {name, description, input_schema} only (no type:function)
+			// command-code@1.6.0 toWireTools: {name, description, input_schema} only (no type:function)
 			contains: []string{
 				`"name":"list_files"`,
 				`"description":"List files"`,
@@ -569,7 +621,7 @@ func TestCommandCodeExecutor_injectHeaders_CLIpfingerprint(t *testing.T) {
 	if got := getLower("x-co-flag"); got != "false" {
 		t.Errorf("x-co-flag = %q, want false", got)
 	}
-	// Optional headers from command-code@1.4.6: only sent when configured.
+	// Optional headers from command-code@1.6.0: only sent when configured.
 	if got := getLower("x-oss-primary-provider"); got != "" {
 		t.Errorf("x-oss-primary-provider = %q, want empty by default", got)
 	}
