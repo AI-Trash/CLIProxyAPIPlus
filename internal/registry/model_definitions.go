@@ -261,7 +261,7 @@ func upsertModelInfos(models []*ModelInfo, extras ...*ModelInfo) []*ModelInfo {
 }
 
 // GetCommandCodeModels returns the available model definitions for Command Code.
-// Synced from command-code@1.6.0 (npm) model catalog (vI / kr in dist/cli.mjs)
+// Synced from command-code@1.9.0 (npm) model catalog (vI / kr in dist/cli.mjs)
 // and the generated knowledge reference models.md.
 //
 // IDs are the CLI canonical wire form used in /alpha/generate params.model:
@@ -314,6 +314,7 @@ func GetCommandCodeModels() []*ModelInfo {
 		cc("xiaomi/mimo-v2.5", "MiMo V2.5", "Xiaomi MiMo V2.5 via Command Code", 1000000),
 		cc("Qwen/Qwen3.6-Max-Preview", "Qwen 3.6 Max Preview", "Qwen 3.6 Max Preview via Command Code", 200000),
 		cc("Qwen/Qwen3.6-Plus", "Qwen 3.6 Plus", "Qwen 3.6 Plus via Command Code", 200000),
+		cc("Qwen/Qwen3.8-Max", "Qwen 3.8 Max", "Qwen 3.8 Max via Command Code", 1000000),
 		cc("Qwen/Qwen3.7-Max", "Qwen 3.7 Max", "Qwen 3.7 Max via Command Code", 1000000),
 		cc("Qwen/Qwen3.7-Plus", "Qwen 3.7 Plus", "Qwen 3.7 Plus via Command Code", 1000000),
 		cc("Qwen/Qwen3.7-Flash", "Qwen 3.7 Flash", "Qwen 3.7 Flash via Command Code", 1000000),
