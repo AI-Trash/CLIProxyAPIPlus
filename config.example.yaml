@@ -667,7 +667,7 @@ nonstream-keepalive-interval: 0
 #   3. Or manually create a JSON file in the auths/ directory:
 #      {"type": "commandcode", "api_key": "cc_...", "email": "user@example.com"}
 #
-# Model aliases (synced from command-code@1.6.0).
+# Model aliases (synced from command-code@1.9.0).
 # name  = upstream / registry id (canonical wire form sent to /alpha/generate)
 # alias = client-facing short name
 # Claude/GPT bare ids are already the wire form; aliases mainly shorten
@@ -744,6 +744,8 @@ nonstream-keepalive-interval: 0
 #     - name: "xiaomi/mimo-v2.5"
 #       alias: "mimo-v2.5"
 #     ── Qwen (Go-plan) ──
+#     - name: "Qwen/Qwen3.8-Max"
+#       alias: "qwen-3.8-max"
 #     - name: "Qwen/Qwen3.7-Max"
 #       alias: "qwen-3.7-max"
 #     - name: "Qwen/Qwen3.7-Plus"
