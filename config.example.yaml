@@ -667,7 +667,7 @@ nonstream-keepalive-interval: 0
 #   3. Or manually create a JSON file in the auths/ directory:
 #      {"type": "commandcode", "api_key": "cc_...", "email": "user@example.com"}
 #
-# Model aliases (synced from command-code@1.9.0).
+# Model aliases (synced from command-code@1.14.0).
 # name  = upstream / registry id (canonical wire form sent to /alpha/generate)
 # alias = client-facing short name
 # Claude/GPT bare ids are already the wire form; aliases mainly shorten
@@ -790,6 +790,10 @@ nonstream-keepalive-interval: 0
 #       alias: "ling-3.0-flash"
 #     - name: "meta/muse-spark-1.1"
 #       alias: "muse-spark-1.1"
+#     - name: "meta/muse-spark-1.2"
+#       alias: "muse-spark-1.2"
+#     - name: "meta/muse-spark-1.2-contributor"
+#       alias: "muse-spark-1.2-contributor"
 #     - name: "xai/grok-4.5"
 #       alias: "grok-4.5"
 

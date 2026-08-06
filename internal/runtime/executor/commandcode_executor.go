@@ -92,7 +92,7 @@ func (e *CommandCodeExecutor) injectHeaders(req *http.Request, auth *cliproxyaut
 	}
 
 	// CLI fingerprint headers — the official CLI sets these in lowercase.
-	// Verified against command-code@1.11.1 buildCommandAuthHeaders / createApiClient.
+	// Verified against command-code@1.14.0 buildCommandAuthHeaders / createApiClient.
 	// Header set: x-cli-environment, x-command-code-version, x-session-id,
 	// x-project-slug, x-taste-learning, x-co-flag (INTERNAL_TEAM_FLAG_HEADER),
 	// optional x-oss-primary-provider / x-cmd-zdr, traceparent, User-Agent:cli.
@@ -466,7 +466,7 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 				emitCommandCodeTranslatedStreamChunk(ctx, out, to, responseFormat, req.Model, opts.OriginalRequest, translated, chunk, &param)
 
 			case chunkType == "reasoning-delta":
-				// command-code@1.11.1 consumeStream handles reasoning-start /
+				// command-code@1.14.0 consumeStream handles reasoning-start /
 				// reasoning-delta / reasoning-end. Forward deltas as OpenAI
 				// reasoning_content so clients that surface thinking see it.
 				text := gjson.GetBytes(line, "text").String()
@@ -514,7 +514,7 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 						InputTokens:  promptTokens,
 						OutputTokens: completionTokens,
 					}
-					// command-code@1.11.1 finish event: totalUsage.inputTokenDetails
+					// command-code@1.14.0 finish event: totalUsage.inputTokenDetails
 					// carries cacheReadTokens / cacheWriteTokens.
 					if cached := usageNode.Get("inputTokenDetails.cacheReadTokens"); cached.Exists() {
 						detail.CachedTokens = cached.Int()
@@ -529,7 +529,7 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 					}
 					reporter.publish(ctx, detail)
 				}
-				// command-code@1.11.1: finishReason falls back to rawFinishReason.
+				// command-code@1.14.0: finishReason falls back to rawFinishReason.
 				finishReasonRaw := gjson.GetBytes(line, "finishReason").String()
 				if finishReasonRaw == "" {
 					finishReasonRaw = gjson.GetBytes(line, "rawFinishReason").String()
@@ -648,7 +648,7 @@ func (e *CommandCodeExecutor) buildHTTPRequest(ctx context.Context, baseURL, end
 
 func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opts cliproxyexecutor.Options, auth *cliproxyauth.Auth) []byte {
 	payload := req.Payload
-	// Wire model IDs match command-code@1.11.1 catalog canonical form
+	// Wire model IDs match command-code@1.14.0 catalog canonical form
 	// (bare Claude/GPT ids, org/name for gateway models) — not billing
 	// "provider:id" prefixes.
 	model := canonicalizeCommandCodeModel(req.Model)
@@ -679,7 +679,7 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 		maxTokens = gjson.GetBytes(translated, "max_completion_tokens").Int()
 	}
 	if maxTokens == 0 {
-		// Official CLI default: OS=64e3 in command-code@1.11.1.
+		// Official CLI default: OS=64e3 in command-code@1.14.0.
 		maxTokens = 64000
 	}
 
@@ -691,13 +691,13 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 		sysPrompt = gjson.GetBytes(payload, "instructions").String()
 	}
 
-	// Params mirror command-code@1.11.1 postStream body.params: model, messages,
+	// Params mirror command-code@1.14.0 postStream body.params: model, messages,
 	// tools, system, max_tokens, stream (always true). Optional temperature /
 	// reasoning_effort are added below when present.
 	params := fmt.Sprintf(`"model":%s,"messages":%s,"tools":%s,"max_tokens":%d,"stream":true`,
 		ccEncode(model), messages, convertToolsForCC(translated), maxTokens)
 
-	// Body shape mirrors command-code@1.11.1 transport.postStream({route:RS,body}):
+	// Body shape mirrors command-code@1.14.0 transport.postStream({route:RS,body}):
 	// config + memory/taste/skills null + permissionMode + optional threadId
 	// (UUID only) + params. No "mode" for regular chat (CLI omits when unset).
 	// config.environment is the OS/Node.js info string (NOT "production", which
@@ -757,7 +757,7 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 }
 
 // canonicalizeCommandCodeModel maps client/billing model ids to the canonical
-// form used by command-code@1.11.1 on the /alpha/generate wire (params.model).
+// form used by command-code@1.14.0 on the /alpha/generate wire (params.model).
 // Billing prefixes (anthropic:/openai:) are stripped; known deprecated ids are
 // rewritten to their replacements (rr/or maps in dist/cli.mjs).
 func canonicalizeCommandCodeModel(model string) string {
@@ -789,7 +789,7 @@ func canonicalizeCommandCodeModel(model string) string {
 	return base
 }
 
-// commandCodeDeprecatedModels mirrors command-code@1.11.1 rr/or replacement maps.
+// commandCodeDeprecatedModels mirrors command-code@1.14.0 rr/or replacement maps.
 var commandCodeDeprecatedModels = map[string]string{
 	"claude-sonnet-4-20250514":   "claude-sonnet-4-6",
 	"claude-sonnet-4-5-20250929": "claude-sonnet-4-6",
@@ -1043,7 +1043,7 @@ func convertToolsForCC(translated []byte) string {
 		return "[]"
 	}
 
-	// toWireTools in command-code@1.11.1 emits {name, description, input_schema}
+	// toWireTools in command-code@1.14.0 emits {name, description, input_schema}
 	// only — no "type":"function" wrapper field.
 	var converted []json.RawMessage
 	for _, tool := range tools.Array() {
@@ -1321,7 +1321,7 @@ func (e *CommandCodeExecutor) aggregateStreamToOpenAI(ctx context.Context, body 
 					cachedTokens = cached.Int()
 				}
 			}
-			// command-code@1.11.1: finishReason falls back to rawFinishReason.
+			// command-code@1.14.0: finishReason falls back to rawFinishReason.
 			finishReasonRaw := gjson.GetBytes(line, "finishReason").String()
 			if finishReasonRaw == "" {
 				finishReasonRaw = gjson.GetBytes(line, "rawFinishReason").String()
