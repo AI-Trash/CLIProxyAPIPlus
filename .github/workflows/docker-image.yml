@@ -11,8 +11,9 @@ run-name: >-
 #     GITHUB_TOKEN events do not cascade)
 #   - workflow_dispatch with optional `tag` input
 #
-# Runner: self-hosted `cliproxy` (docker host LXC). QEMU + buildx produce both
-# linux/amd64 and linux/arm64 from a single x64 host.
+# Runners: GitHub-hosted (ubuntu-latest for amd64, ubuntu-24.04-arm for native
+# arm64), matching the upstream router-for-me/CLIProxyAPI workflow. A separate
+# manifest job merges the two platform tags into one multi-arch image.
 #
 # Registries:
 #   - GHCR: ghcr.io/<repository> (built-in GITHUB_TOKEN)
@@ -52,7 +53,14 @@ concurrency:
 
 jobs:
   build:
-    runs-on: [self-hosted, cliproxy]
+    strategy:
+      matrix:
+        include:
+          - platform: amd64
+            runs-on: ubuntu-latest
+          - platform: arm64
+            runs-on: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runs-on }}
     steps:
       - name: Resolve build ref
         id: ref
@@ -81,11 +89,6 @@ jobs:
         env:
           EXPECTED_COMMIT: ${{ inputs.commit }}
         run: test "$(git rev-parse HEAD)" = "${EXPECTED_COMMIT}"
-
-      - name: Set up QEMU (for arm64 emulation on x64 self-hosted runner)
-        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
-        with:
-          platforms: arm64
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
@@ -145,23 +148,24 @@ jobs:
           DOCKERHUB_REF: ${{ steps.img.outputs.dockerhub_ref }}
           VERSION: ${{ steps.meta.outputs.version }}
           DOCKERHUB_ENABLED: ${{ steps.dockerhub.outputs.enabled }}
+          PLATFORM: ${{ matrix.platform }}
         run: |
           {
             echo "tags<<EOF"
-            echo "${GHCR_REF}:${VERSION}"
-            echo "${GHCR_REF}:latest"
+            echo "${GHCR_REF}:${VERSION}-${PLATFORM}"
+            echo "${GHCR_REF}:latest-${PLATFORM}"
             if [ "${DOCKERHUB_ENABLED}" = "true" ]; then
-              echo "${DOCKERHUB_REF}:${VERSION}"
-              echo "${DOCKERHUB_REF}:latest"
+              echo "${DOCKERHUB_REF}:${VERSION}-${PLATFORM}"
+              echo "${DOCKERHUB_REF}:latest-${PLATFORM}"
             fi
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Build and push (multi-arch)
+      - name: Build and push
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/${{ matrix.platform }}
           push: true
           build-args: |
             VERSION=${{ steps.meta.outputs.version }}
@@ -169,16 +173,89 @@ jobs:
             BUILD_DATE=${{ steps.meta.outputs.build_date }}
           tags: ${{ steps.tags.outputs.tags }}
 
+  manifest:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve build ref
+        id: ref
+        run: |
+          REF="${{ inputs.tag }}"
+          if [ -z "${REF}" ]; then REF="${GITHUB_REF_NAME}"; fi
+          echo "ref=${REF}" >> "$GITHUB_OUTPUT"
+
+      - name: Lowercase image names
+        id: img
+        run: |
+          GHCR_IMG="${GHCR_REGISTRY}/${GHCR_IMAGE_NAME}"
+          GHCR_IMG_LC="$(echo "${GHCR_IMG}" | tr '[:upper:]' '[:lower:]')"
+          DOCKERHUB_IMG_LC="$(echo "${DOCKERHUB_IMAGE_NAME}" | tr '[:upper:]' '[:lower:]')"
+          {
+            echo "ghcr_ref=${GHCR_IMG_LC}"
+            echo "dockerhub_ref=${DOCKERHUB_IMG_LC}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Detect Docker Hub credentials
+        id: dockerhub
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -n "${DOCKERHUB_TOKEN}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+
+      - name: Login to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ${{ env.GHCR_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Login to Docker Hub
+        if: steps.dockerhub.outputs.enabled == 'true'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME || 'kaitranntt' }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Create and push manifests (GHCR)
+        env:
+          GHCR_REF: ${{ steps.img.outputs.ghcr_ref }}
+          VERSION: ${{ steps.ref.outputs.ref }}
+        run: |
+          docker buildx imagetools create \
+            -t "${GHCR_REF}:${VERSION}" \
+            -t "${GHCR_REF}:latest" \
+            "${GHCR_REF}:${VERSION}-amd64" \
+            "${GHCR_REF}:${VERSION}-arm64"
+
+      - name: Create and push manifests (Docker Hub)
+        if: steps.dockerhub.outputs.enabled == 'true'
+        env:
+          DOCKERHUB_REF: ${{ steps.img.outputs.dockerhub_ref }}
+          VERSION: ${{ steps.ref.outputs.ref }}
+        run: |
+          docker buildx imagetools create \
+            -t "${DOCKERHUB_REF}:${VERSION}" \
+            -t "${DOCKERHUB_REF}:latest" \
+            "${DOCKERHUB_REF}:${VERSION}-amd64" \
+            "${DOCKERHUB_REF}:${VERSION}-arm64"
+
       - name: Summary
         env:
           GHCR_REF: ${{ steps.img.outputs.ghcr_ref }}
           DOCKERHUB_REF: ${{ steps.img.outputs.dockerhub_ref }}
-          VERSION: ${{ steps.meta.outputs.version }}
+          VERSION: ${{ steps.ref.outputs.ref }}
           DOCKERHUB_ENABLED: ${{ steps.dockerhub.outputs.enabled }}
         run: |
           {
             echo "## Published"
-            echo "- \`${GHCR_REF}:${VERSION}\`"
+            echo "- \`${GHCR_REF}:${VERSION}\` (multi-arch amd64+arm64)"
             echo "- \`${GHCR_REF}:latest\`"
             if [ "${DOCKERHUB_ENABLED}" = "true" ]; then
               echo "- \`${DOCKERHUB_REF}:${VERSION}\`"
