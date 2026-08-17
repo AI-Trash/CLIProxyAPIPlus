@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -737,8 +738,8 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 		body, _ = sjson.Set(body, "params.system", sysPrompt)
 	}
 
-	if cfg := gjson.GetBytes(translated, "reasoning_effort"); cfg.Exists() {
-		body, _ = sjson.Set(body, "params.reasoning_effort", cfg.Value())
+	if effort := resolveCommandCodeReasoningEffort(req.Model, translated); effort != "" {
+		body, _ = sjson.Set(body, "params.reasoning_effort", effort)
 	}
 	if temp := gjson.GetBytes(translated, "temperature"); temp.Exists() {
 		body, _ = sjson.Set(body, "params.temperature", temp.Value())
@@ -756,16 +757,102 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 	return []byte(body)
 }
 
+// resolveCommandCodeReasoningEffort determines the canonical reasoning_effort
+// string ("low", "medium", "high", "xhigh", "max") for CommandCode, or empty
+// string if reasoning should be omitted (e.g. disabled, none, unsupported).
+//
+// Priority order:
+// 1. Model name suffix (e.g. "model(high)", "model(16384)", "model(none)")
+// 2. Body reasoning_effort in translated payload
+func resolveCommandCodeReasoningEffort(model string, translated []byte) string {
+	parsed := thinking.ParseSuffix(model)
+	if parsed.HasSuffix && parsed.RawSuffix != "" {
+		if effort, ok := normalizeCommandCodeReasoningEffort(parsed.RawSuffix); ok {
+			return effort
+		}
+		if isCommandCodeDisabledEffort(parsed.RawSuffix) {
+			return ""
+		}
+	}
+
+	if re := gjson.GetBytes(translated, "reasoning_effort"); re.Exists() {
+		switch re.Type {
+		case gjson.String:
+			if effort, ok := normalizeCommandCodeReasoningEffort(re.String()); ok {
+				return effort
+			}
+		case gjson.Number:
+			if effort, ok := normalizeCommandCodeBudget(int(re.Int())); ok {
+				return effort
+			}
+		case gjson.True:
+			return string(thinking.LevelHigh)
+		}
+	}
+	return ""
+}
+
+// normalizeCommandCodeReasoningEffort maps effort strings to valid CommandCode
+// options ("low", "medium", "high", "xhigh", "max") or returns ("", false)
+// if reasoning is disabled or unrecognized.
+func normalizeCommandCodeReasoningEffort(val string) (string, bool) {
+	val = strings.ToLower(strings.TrimSpace(val))
+	switch val {
+	case "low", "medium", "high", "xhigh", "max":
+		return val, true
+	case "minimal":
+		return string(thinking.LevelLow), true
+	case "auto":
+		return string(thinking.LevelHigh), true
+	default:
+		// Check if it's a numeric budget string (e.g. "16384")
+		if budget, err := strconv.Atoi(val); err == nil {
+			return normalizeCommandCodeBudget(budget)
+		}
+		return "", false
+	}
+}
+
+// isCommandCodeDisabledEffort reports whether val represents an explicitly disabled thinking setting.
+func isCommandCodeDisabledEffort(val string) bool {
+	val = strings.ToLower(strings.TrimSpace(val))
+	switch val {
+	case "none", "off", "0", "false", "":
+		return true
+	default:
+		if budget, err := strconv.Atoi(val); err == nil && budget <= 0 {
+			return true
+		}
+		return false
+	}
+}
+
+// normalizeCommandCodeBudget maps numeric token budgets to CommandCode discrete levels.
+func normalizeCommandCodeBudget(budget int) (string, bool) {
+	switch {
+	case budget <= 0:
+		return "", false
+	case budget <= 1024:
+		return string(thinking.LevelLow), true
+	case budget <= 8192:
+		return string(thinking.LevelMedium), true
+	case budget <= 24576:
+		return string(thinking.LevelHigh), true
+	default:
+		return string(thinking.LevelXHigh), true
+	}
+}
+
 // canonicalizeCommandCodeModel maps client/billing model ids to the canonical
 // form used by command-code@1.14.0 on the /alpha/generate wire (params.model).
 // Billing prefixes (anthropic:/openai:) are stripped; known deprecated ids are
-// rewritten to their replacements (rr/or maps in dist/cli.mjs).
+// rewritten to their replacements (rr/or maps in dist/cli.mjs). Suffixes are
+// stripped so wire params.model contains only the clean base model.
 func canonicalizeCommandCodeModel(model string) string {
 	model = strings.TrimSpace(model)
 	if model == "" {
 		return model
 	}
-	// Preserve thinking/effort suffixes handled elsewhere; only rewrite the base.
 	parsed := thinking.ParseSuffix(model)
 	base := parsed.ModelName
 	if base == "" {
@@ -782,9 +869,6 @@ func canonicalizeCommandCodeModel(model string) string {
 		base = repl
 	} else if repl, ok := commandCodeDeprecatedModels[base]; ok {
 		base = repl
-	}
-	if parsed.HasSuffix && parsed.RawSuffix != "" {
-		return base + "(" + parsed.RawSuffix + ")"
 	}
 	return base
 }
