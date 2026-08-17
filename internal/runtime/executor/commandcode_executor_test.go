@@ -528,6 +528,60 @@ func TestCommandCodeExecutor_buildRequestBody(t *testing.T) {
 				`"output":{"type":"text","value":"done"}`,
 			},
 		},
+		{
+			name:        "reasoning_effort none omitted",
+			payload:     `{"model":"test","messages":[{"role":"user","content":"hi"}],"reasoning_effort":"none","stream":true}`,
+			srcFormat:   "openai",
+			notContains: []string{`"reasoning_effort"`},
+		},
+		{
+			name:        "responses reasoning effort none omitted",
+			payload:     `{"model":"test","input":"hi","reasoning":{"effort":"none"},"instructions":"title","stream":true}`,
+			srcFormat:   "openai-response",
+			notContains: []string{`"reasoning_effort"`},
+		},
+		{
+			name:      "reasoning_effort minimal mapped to low",
+			payload:   `{"model":"test","messages":[{"role":"user","content":"hi"}],"reasoning_effort":"minimal","stream":true}`,
+			srcFormat: "openai",
+			contains:  []string{`"reasoning_effort":"low"`},
+		},
+		{
+			name:      "reasoning_effort auto mapped to high",
+			payload:   `{"model":"test","messages":[{"role":"user","content":"hi"}],"reasoning_effort":"auto","stream":true}`,
+			srcFormat: "openai",
+			contains:  []string{`"reasoning_effort":"high"`},
+		},
+		{
+			name:      "reasoning_effort high passed through",
+			payload:   `{"model":"test","messages":[{"role":"user","content":"hi"}],"reasoning_effort":"high","stream":true}`,
+			srcFormat: "openai",
+			contains:  []string{`"reasoning_effort":"high"`},
+		},
+		{
+			name:        "model suffix low sets reasoning_effort and strips suffix from model",
+			model:       "meta/muse-spark-1.2-contributor(low)",
+			payload:     `{"model":"meta/muse-spark-1.2-contributor(low)","messages":[{"role":"user","content":"hi"}],"stream":true}`,
+			srcFormat:   "openai",
+			contains:    []string{`"model":"meta/muse-spark-1.2-contributor"`, `"reasoning_effort":"low"`},
+			notContains: []string{`"model":"meta/muse-spark-1.2-contributor(low)"`},
+		},
+		{
+			name:        "model suffix budget sets reasoning_effort and strips suffix from model",
+			model:       "meta/muse-spark-1.2-contributor(16384)",
+			payload:     `{"model":"meta/muse-spark-1.2-contributor(16384)","messages":[{"role":"user","content":"hi"}],"stream":true}`,
+			srcFormat:   "openai",
+			contains:    []string{`"model":"meta/muse-spark-1.2-contributor"`, `"reasoning_effort":"high"`},
+			notContains: []string{`"model":"meta/muse-spark-1.2-contributor(16384)"`},
+		},
+		{
+			name:        "model suffix none omits reasoning_effort and strips suffix from model",
+			model:       "meta/muse-spark-1.2-contributor(none)",
+			payload:     `{"model":"meta/muse-spark-1.2-contributor(none)","messages":[{"role":"user","content":"hi"}],"stream":true}`,
+			srcFormat:   "openai",
+			contains:    []string{`"model":"meta/muse-spark-1.2-contributor"`},
+			notContains: []string{`"reasoning_effort"`, `(none)`},
+		},
 	}
 
 	for _, tt := range tests {
@@ -571,7 +625,7 @@ func TestCanonicalizeCommandCodeModel(t *testing.T) {
 		{"claude-haiku-4-5", "claude-haiku-4-5-20251001"},
 		{"claude-opus-4-6", "claude-opus-4-7"},
 		{"deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-pro"},
-		{"anthropic:claude-sonnet-5(high)", "claude-sonnet-5(high)"},
+		{"anthropic:claude-sonnet-5(high)", "claude-sonnet-5"},
 	}
 	for _, tt := range tests {
 		if got := canonicalizeCommandCodeModel(tt.in); got != tt.want {
