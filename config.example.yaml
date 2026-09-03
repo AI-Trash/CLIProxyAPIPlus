@@ -667,7 +667,7 @@ nonstream-keepalive-interval: 0
 #   3. Or manually create a JSON file in the auths/ directory:
 #      {"type": "commandcode", "api_key": "cc_...", "email": "user@example.com"}
 #
-# Model aliases (synced from command-code@1.14.0).
+# Model aliases (synced from command-code@1.44.0).
 # name  = upstream / registry id (canonical wire form sent to /alpha/generate)
 # alias = client-facing short name
 # Claude/GPT bare ids are already the wire form; aliases mainly shorten
@@ -679,6 +679,8 @@ nonstream-keepalive-interval: 0
 #       alias: "anthropic:claude-sonnet-5"
 #     - name: "claude-sonnet-4-6"
 #       alias: "anthropic:claude-sonnet-4-6"
+#     - name: "claude-fable-5-1"
+#       alias: "anthropic:claude-fable-5-1"
 #     - name: "claude-fable-5"
 #       alias: "anthropic:claude-fable-5"
 #     - name: "claude-opus-5"
@@ -711,6 +713,10 @@ nonstream-keepalive-interval: 0
 #       alias: "deepseek-v4-pro"
 #     - name: "deepseek/deepseek-v4-flash"
 #       alias: "deepseek-v4-flash"
+#     - name: "deepseek/deepseek-v4-flash-vision-exp"
+#       alias: "deepseek-v4-flash-vision-exp"
+#     - name: "deepseek/deepseek-v4-flash-fast"
+#       alias: "deepseek-v4-flash-fast"
 #     ── Kimi (Go-plan) ──
 #     - name: "moonshotai/Kimi-K3"
 #       alias: "kimi-k3"
@@ -723,6 +729,10 @@ nonstream-keepalive-interval: 0
 #     - name: "moonshotai/Kimi-K2.5"
 #       alias: "kimi-k2.5"
 #     ── GLM (Go-plan) ──
+#     - name: "z-ai/glm-5.3-flash"
+#       alias: "glm-5.3-flash"
+#     - name: "zai-org/GLM-5.3"
+#       alias: "glm-5.3"
 #     - name: "zai-org/GLM-5.2"
 #       alias: "glm-5.2"
 #     - name: "zai-org/GLM-5.2-Fast"
@@ -744,8 +754,14 @@ nonstream-keepalive-interval: 0
 #     - name: "xiaomi/mimo-v2.5"
 #       alias: "mimo-v2.5"
 #     ── Qwen (Go-plan) ──
+#     - name: "Qwen/Qwen3.8-Max-0902"
+#       alias: "qwen-3.8-max-0902"
 #     - name: "Qwen/Qwen3.8-Max"
 #       alias: "qwen-3.8-max"
+#     - name: "Qwen/Qwen3.8-27B"
+#       alias: "qwen-3.8-27b"
+#     - name: "Qwen/Qwen3.8-Flash"
+#       alias: "qwen-3.8-flash"
 #     - name: "Qwen/Qwen3.7-Max"
 #       alias: "qwen-3.7-max"
 #     - name: "Qwen/Qwen3.7-Plus"
@@ -762,11 +778,19 @@ nonstream-keepalive-interval: 0
 #     - name: "stepfun/Step-3.5-Flash"
 #       alias: "step-3.5-flash"
 #     ── Tencent (Go-plan, paid) ──
+#     - name: "tencent/hy4-preview"
+#       alias: "tencent-hy4-preview"
+#     - name: "tencent/hy4-preview"
+#       alias: "hy4-preview"
 #     - name: "tencent/hy3-paid"
 #       alias: "tencent-hy3"
 #     - name: "tencent/hy3-paid"
 #       alias: "hy3"
 #     ── Gemini (Pro+ plans) ──
+#     - name: "google/gemini-3.8-flash"
+#       alias: "gemini-3.8-flash"
+#     - name: "google/gemini-3.7-flash"
+#       alias: "gemini-3.7-flash"
 #     - name: "google/gemini-3.6-flash"
 #       alias: "gemini-3.6-flash"
 #     - name: "google/gemini-3.5-flash"
@@ -776,6 +800,8 @@ nonstream-keepalive-interval: 0
 #     - name: "google/gemini-3.1-flash-lite"
 #       alias: "gemini-3.1-flash-lite"
 #     ── Other (Go-plan unless noted) ──
+#     - name: "meituan/LongCat-2.0:free"
+#       alias: "longcat-2.0"
 #     - name: "nvidia/nemotron-3-ultra-550b-a55b"
 #       alias: "nemotron-3-ultra"
 #     - name: "sakana/fugu-ultra"
@@ -794,8 +820,14 @@ nonstream-keepalive-interval: 0
 #       alias: "muse-spark-1.2"
 #     - name: "meta/muse-spark-1.2-contributor"
 #       alias: "muse-spark-1.2-contributor"
+#     - name: "meta/muse-spark-1.3"
+#       alias: "muse-spark-1.3"
+#     - name: "meta/muse-spark-1.3-contributor"
+#       alias: "muse-spark-1.3-contributor"
 #     - name: "xai/grok-4.5"
 #       alias: "grok-4.5"
+#     - name: "xai/grok-4.6"
+#       alias: "grok-4.6"
 
 # OpenAI compatibility providers
 # openai-compatibility:

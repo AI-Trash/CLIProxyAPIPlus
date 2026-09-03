@@ -290,7 +290,7 @@ func upsertModelInfos(models []*ModelInfo, extras ...*ModelInfo) []*ModelInfo {
 }
 
 // GetCommandCodeModels returns the available model definitions for Command Code.
-// Synced from command-code@1.14.0 (npm) model catalog (vI / kr in dist/cli.mjs)
+// Synced from command-code@1.44.0 (npm) model catalog (Sr / yr / Tr in dist/cli.mjs)
 // and the generated knowledge reference models.md.
 //
 // IDs are the CLI canonical wire form used in /alpha/generate params.model:
@@ -311,6 +311,7 @@ func GetCommandCodeModels() []*ModelInfo {
 		// ── Premium models (Anthropic) — canonical bare ids ──
 		cc("claude-sonnet-5", "Claude Sonnet 5", "Anthropic Claude Sonnet 5 via Command Code", 1000000),
 		cc("claude-sonnet-4-6", "Claude Sonnet 4.6", "Anthropic Claude Sonnet 4.6 via Command Code", 1000000),
+		cc("claude-fable-5-1", "Claude Fable 5.1", "Anthropic Claude Fable 5.1 via Command Code", 1000000),
 		cc("claude-fable-5", "Claude Fable 5", "Anthropic Claude Fable 5 via Command Code", 1000000),
 		cc("claude-opus-5", "Claude Opus 5", "Anthropic Claude Opus 5 via Command Code", 1000000),
 		cc("claude-opus-4-8", "Claude Opus 4.8", "Anthropic Claude Opus 4.8 via Command Code", 1000000),
@@ -327,11 +328,15 @@ func GetCommandCodeModels() []*ModelInfo {
 		// ── Open-source / gateway models ──
 		cc("deepseek/deepseek-v4-pro", "DeepSeek V4 Pro", "DeepSeek V4 Pro via Command Code", 1000000),
 		cc("deepseek/deepseek-v4-flash", "DeepSeek V4 Flash", "DeepSeek V4 Flash via Command Code", 1000000),
+		cc("deepseek/deepseek-v4-flash-vision-exp", "DeepSeek V4 Flash Vision (exp)", "DeepSeek V4 Flash Vision (exp) via Command Code", 1000000),
+		cc("deepseek/deepseek-v4-flash-fast", "DeepSeek V4 Flash Fast", "DeepSeek V4 Flash Fast via Command Code", 1000000),
 		cc("moonshotai/Kimi-K3", "Kimi K3", "Moonshot Kimi K3 via Command Code", 1000000),
 		cc("moonshotai/Kimi-K2.7-Code", "Kimi K2.7 Code", "Moonshot Kimi K2.7 Code via Command Code", 256000),
 		cc("moonshotai/Kimi-K2.7-Code-Highspeed", "Kimi K2.7 Code HighSpeed", "Moonshot Kimi K2.7 Code HighSpeed via Command Code", 262000),
 		cc("moonshotai/Kimi-K2.6", "Kimi K2.6", "Moonshot Kimi K2.6 via Command Code", 256000),
 		cc("moonshotai/Kimi-K2.5", "Kimi K2.5", "Moonshot Kimi K2.5 via Command Code", 256000),
+		cc("z-ai/glm-5.3-flash", "GLM-5.3 Flash", "Zhipu GLM-5.3 Flash via Command Code", 1048576),
+		cc("zai-org/GLM-5.3", "GLM-5.3", "Zhipu GLM-5.3 via Command Code", 1000000),
 		cc("zai-org/GLM-5.2", "GLM-5.2", "Zhipu GLM-5.2 via Command Code", 1000000),
 		cc("zai-org/GLM-5.2-Fast", "GLM-5.2 Fast", "Zhipu GLM-5.2 Fast via Command Code", 1000000),
 		cc("zai-org/GLM-5.1", "GLM-5.1", "Zhipu GLM-5.1 via Command Code", 200000),
@@ -343,13 +348,20 @@ func GetCommandCodeModels() []*ModelInfo {
 		cc("xiaomi/mimo-v2.5", "MiMo V2.5", "Xiaomi MiMo V2.5 via Command Code", 1000000),
 		cc("Qwen/Qwen3.6-Max-Preview", "Qwen 3.6 Max Preview", "Qwen 3.6 Max Preview via Command Code", 200000),
 		cc("Qwen/Qwen3.6-Plus", "Qwen 3.6 Plus", "Qwen 3.6 Plus via Command Code", 200000),
+		cc("Qwen/Qwen3.8-Max-0902", "Qwen 3.8 Max 0902", "Qwen 3.8 Max 0902 via Command Code", 1000000),
 		cc("Qwen/Qwen3.8-Max", "Qwen 3.8 Max", "Qwen 3.8 Max via Command Code", 1000000),
+		cc("Qwen/Qwen3.8-27B", "Qwen 3.8 27B", "Qwen 3.8 27B via Command Code", 262144),
+		cc("Qwen/Qwen3.8-Flash", "Qwen 3.8 Flash", "Qwen 3.8 Flash via Command Code", 1000000),
 		cc("Qwen/Qwen3.7-Max", "Qwen 3.7 Max", "Qwen 3.7 Max via Command Code", 1000000),
 		cc("Qwen/Qwen3.7-Plus", "Qwen 3.7 Plus", "Qwen 3.7 Plus via Command Code", 1000000),
 		cc("Qwen/Qwen3.7-Flash", "Qwen 3.7 Flash", "Qwen 3.7 Flash via Command Code", 1000000),
+		cc("meituan/LongCat-2.0:free", "LongCat 2.0", "Meituan LongCat 2.0 (free) via Command Code", 1048576),
 		cc("stepfun/Step-3.7-Flash", "Step 3.7 Flash", "StepFun Step 3.7 Flash via Command Code", 256000),
 		cc("stepfun/Step-3.5-Flash", "Step 3.5 Flash", "StepFun Step 3.5 Flash via Command Code", 1000000),
+		cc("tencent/hy4-preview", "Tencent Hy4 Preview", "Tencent Hy4 Preview via Command Code", 1048576),
 		cc("tencent/hy3-paid", "Tencent Hy3", "Tencent Hy3 via Command Code", 262144),
+		cc("google/gemini-3.8-flash", "Gemini 3.8 Flash", "Google Gemini 3.8 Flash via Command Code", 1000000),
+		cc("google/gemini-3.7-flash", "Gemini 3.7 Flash", "Google Gemini 3.7 Flash via Command Code", 1048576),
 		cc("google/gemini-3.6-flash", "Gemini 3.6 Flash", "Google Gemini 3.6 Flash via Command Code", 1000000),
 		cc("google/gemini-3.5-flash", "Gemini 3.5 Flash", "Google Gemini 3.5 Flash via Command Code", 1000000),
 		cc("google/gemini-3.5-flash-lite", "Gemini 3.5 Flash Lite", "Google Gemini 3.5 Flash Lite via Command Code", 1000000),
@@ -363,7 +375,10 @@ func GetCommandCodeModels() []*ModelInfo {
 		cc("meta/muse-spark-1.1", "Muse Spark 1.1", "Meta Muse Spark 1.1 via Command Code", 1048576),
 		cc("meta/muse-spark-1.2", "Muse Spark 1.2", "Meta Muse Spark 1.2 via Command Code", 1048576),
 		cc("meta/muse-spark-1.2-contributor", "Muse Spark 1.2 Contributor", "Meta Muse Spark 1.2 Contributor via Command Code", 1048576),
+		cc("meta/muse-spark-1.3", "Muse Spark 1.3", "Meta Muse Spark 1.3 via Command Code", 1048576),
+		cc("meta/muse-spark-1.3-contributor", "Muse Spark 1.3 Contributor", "Meta Muse Spark 1.3 Contributor via Command Code", 1048576),
 		cc("xai/grok-4.5", "Grok 4.5", "xAI Grok 4.5 via Command Code", 500000),
+		cc("xai/grok-4.6", "Grok 4.6", "xAI Grok 4.6 via Command Code", 500000),
 	}
 }
 

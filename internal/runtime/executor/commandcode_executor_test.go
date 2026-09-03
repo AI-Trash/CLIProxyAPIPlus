@@ -81,7 +81,7 @@ func TestCommandCodeExecutor_ExecuteStream_CodexResponseFormat(t *testing.T) {
 }
 
 func TestCommandCodeExecutor_ExecuteStream_OpenAIFormatReasoning(t *testing.T) {
-	// command-code@1.14.0 stream events: reasoning-start/delta/end + text-delta + finish
+	// command-code@1.44.0 stream events: reasoning-start/delta/end + text-delta + finish
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Write([]byte(`{"type":"reasoning-start"}` + "\n"))
@@ -395,7 +395,7 @@ func TestCommandCodeExecutor_Execute_NonStreamResponsesFormat(t *testing.T) {
 }
 
 func TestCommandCodeExecutor_ExecuteStream_RawFinishReasonAndCacheWrite(t *testing.T) {
-	// command-code@1.14.0: finish event may carry rawFinishReason instead of
+	// command-code@1.44.0: finish event may carry rawFinishReason instead of
 	// finishReason, and inputTokenDetails.cacheWriteTokens.
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -492,7 +492,7 @@ func TestCommandCodeExecutor_buildRequestBody(t *testing.T) {
 			name:      "openai tools passed through",
 			payload:   `{"model":"test","messages":[{"role":"user","content":"inspect"}],"stream":true,"tools":[{"type":"function","function":{"name":"list_files","description":"List files","parameters":{"type":"object","properties":{"path":{"type":"string"}}}}}],"tool_choice":"auto","parallel_tool_calls":true}`,
 			srcFormat: "openai",
-			// command-code@1.14.0 toWireTools: {name, description, input_schema} only (no type:function)
+			// command-code@1.44.0 toWireTools: {name, description, input_schema} only (no type:function)
 			contains: []string{
 				`"name":"list_files"`,
 				`"description":"List files"`,
@@ -526,6 +526,30 @@ func TestCommandCodeExecutor_buildRequestBody(t *testing.T) {
 				`"input":{"filePath":"README.md"}`,
 				`"type":"tool-result"`,
 				`"output":{"type":"text","value":"done"}`,
+			},
+		},
+		{
+			name:      "multimodal image_url converted to command-code wire image format",
+			payload:   `{"model":"test","messages":[{"role":"user","content":[{"type":"text","text":"describe this"},{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgo="}}]}],"stream":true}`,
+			srcFormat: "openai",
+			contains: []string{
+				`"type":"text"`,
+				`"text":"describe this"`,
+				`"type":"image"`,
+				`"image":"data:image/png;base64,iVBORw0KGgo="`,
+				`"mimeType":"image/png"`,
+			},
+		},
+		{
+			name:      "anthropic multimodal image converted to command-code wire image format",
+			payload:   `{"model":"test","messages":[{"role":"user","content":[{"type":"text","text":"describe this"},{"type":"image","source":{"type":"base64","media_type":"image/webp","data":"UklGRg=="}}]}],"stream":true}`,
+			srcFormat: "openai",
+			contains: []string{
+				`"type":"text"`,
+				`"text":"describe this"`,
+				`"type":"image"`,
+				`"image":"data:image/webp;base64,UklGRg=="`,
+				`"mimeType":"image/webp"`,
 			},
 		},
 		{
@@ -624,7 +648,14 @@ func TestCanonicalizeCommandCodeModel(t *testing.T) {
 		{"openai:gpt-5.6-sol", "gpt-5.6-sol"},
 		{"claude-haiku-4-5", "claude-haiku-4-5-20251001"},
 		{"claude-opus-4-6", "claude-opus-4-7"},
+		{"claude-sonnet-4-6-20260215", "claude-sonnet-4-6"},
+		{"claude-sonnet-4-6@20260215", "claude-sonnet-4-6"},
+		{"claude-fable-5-1", "claude-fable-5-1"},
+		{"google/gemini-3.8-flash", "google/gemini-3.8-flash"},
 		{"deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-pro"},
+		{"deepseek/deepseek-v4-flash-fast", "deepseek/deepseek-v4-flash-fast"},
+		{"z-ai/glm-5.3-flash", "z-ai/glm-5.3-flash"},
+		{"Qwen/Qwen3.8-Max-0902", "Qwen/Qwen3.8-Max-0902"},
 		{"anthropic:claude-sonnet-5(high)", "claude-sonnet-5"},
 	}
 	for _, tt := range tests {
@@ -675,12 +706,15 @@ func TestCommandCodeExecutor_injectHeaders_CLIpfingerprint(t *testing.T) {
 	if got := getLower("x-co-flag"); got != "false" {
 		t.Errorf("x-co-flag = %q, want false", got)
 	}
-	// Optional headers from command-code@1.14.0: only sent when configured.
+	// Optional headers from command-code@1.44.0: only sent when configured.
 	if got := getLower("x-oss-primary-provider"); got != "" {
 		t.Errorf("x-oss-primary-provider = %q, want empty by default", got)
 	}
 	if got := getLower("x-cmd-zdr"); got != "" {
 		t.Errorf("x-cmd-zdr = %q, want empty by default", got)
+	}
+	if got := getLower("x-cmd-provider-deepseek-internal"); got != "" {
+		t.Errorf("x-cmd-provider-deepseek-internal = %q, want empty by default", got)
 	}
 	// x-project-slug should match the seeded session project name (not a hard-coded
 	// "workspace" when session context is available).
@@ -735,9 +769,10 @@ func TestCommandCodeExecutor_injectHeaders_CLIpfingerprint(t *testing.T) {
 		ID:       "test-auth-opts",
 		Provider: "commandcode",
 		Attributes: map[string]string{
-			"api_key":              "test-key",
-			"oss_primary_provider": "openrouter",
-			"cmd_zdr":              "1",
+			"api_key":                        "test-key",
+			"oss_primary_provider":           "openrouter",
+			"cmd_zdr":                        "1",
+			"cmd_provider_deepseek_internal": "1",
 		},
 	}
 	httpReq3, _ := http.NewRequest(http.MethodPost, "https://api.commandcode.ai/alpha/generate", nil)
@@ -748,6 +783,9 @@ func TestCommandCodeExecutor_injectHeaders_CLIpfingerprint(t *testing.T) {
 	if got := getLowerFromReq(httpReq3, "x-cmd-zdr"); got != "1" {
 		t.Errorf("x-cmd-zdr = %q, want 1", got)
 	}
+	if got := getLowerFromReq(httpReq3, "x-cmd-provider-deepseek-internal"); got != "1" {
+		t.Errorf("x-cmd-provider-deepseek-internal = %q, want 1", got)
+	}
 }
 
 func getLowerFromReq(req *http.Request, key string) string {
@@ -756,4 +794,63 @@ func getLowerFromReq(req *http.Request, key string) string {
 		return ""
 	}
 	return vals[0]
+}
+
+func TestCommandCodeExecutor_ExecuteStream_ToolResultAndStructuredError(t *testing.T) {
+	// Tests server-side tool-result event is safely consumed without erroring,
+	// and verifies parseCommandCodeStreamErrorMessage parses embedded JSON errors.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte(`{"type":"tool-result","toolCallId":"call_fetch","toolName":"web_fetch","output":{"type":"text","value":"content"}}` + "\n"))
+		w.Write([]byte(`{"type":"text-delta","text":"Result received."}` + "\n"))
+		w.Write([]byte(`{"type":"finish","finishReason":"end_turn","totalUsage":{"inputTokens":15,"outputTokens":5}}` + "\n"))
+	}))
+	defer upstream.Close()
+
+	exec := NewCommandCodeExecutor(&config.Config{})
+	auth := &cliproxyauth.Auth{
+		ID:         "test-auth",
+		Provider:   "commandcode",
+		Metadata:   map[string]any{"api_key": "test-key", "base_url": upstream.URL},
+		Attributes: map[string]string{"base_url": upstream.URL},
+	}
+
+	req := cliproxyexecutor.Request{
+		Model:   "deepseek/deepseek-v4-pro",
+		Payload: []byte(`{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"fetch web"}],"stream":true}`),
+	}
+	opts := cliproxyexecutor.Options{
+		Stream:          true,
+		SourceFormat:    sdktranslator.FromString("openai"),
+		OriginalRequest: req.Payload,
+	}
+
+	result, err := exec.ExecuteStream(context.Background(), auth, req, opts)
+	if err != nil {
+		t.Fatalf("ExecuteStream failed: %v", err)
+	}
+
+	var chunks []string
+	for ch := range result.Chunks {
+		if ch.Err != nil {
+			t.Fatalf("unexpected chunk error: %v", ch.Err)
+		}
+		if ch.Payload != nil {
+			chunks = append(chunks, string(ch.Payload))
+		}
+	}
+	joined := strings.Join(chunks, "\n")
+	if !strings.Contains(joined, "Result received.") {
+		t.Errorf("missing text delta after tool-result: %s", joined)
+	}
+
+	// Verify parseCommandCodeStreamErrorMessage with embedded JSON
+	plainErr := parseCommandCodeStreamErrorMessage([]byte(`{"type":"error","error":"plain message"}`))
+	if plainErr != "plain message" {
+		t.Errorf("got %q, want 'plain message'", plainErr)
+	}
+	embeddedErr := parseCommandCodeStreamErrorMessage([]byte(`{"type":"error","error":"500 {\"error\":{\"message\":\"quota exceeded\"}}"}`))
+	if embeddedErr != "quota exceeded" {
+		t.Errorf("got %q, want 'quota exceeded'", embeddedErr)
+	}
 }
