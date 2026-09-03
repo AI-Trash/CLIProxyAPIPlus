@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -93,10 +94,11 @@ func (e *CommandCodeExecutor) injectHeaders(req *http.Request, auth *cliproxyaut
 	}
 
 	// CLI fingerprint headers — the official CLI sets these in lowercase.
-	// Verified against command-code@1.14.0 buildCommandAuthHeaders / createApiClient.
+	// Verified against command-code@1.44.0 buildCommandAuthHeaders / createApiClient.
 	// Header set: x-cli-environment, x-command-code-version, x-session-id,
 	// x-project-slug, x-taste-learning, x-co-flag (INTERNAL_TEAM_FLAG_HEADER),
-	// optional x-oss-primary-provider / x-cmd-zdr, traceparent, User-Agent:cli.
+	// optional x-oss-primary-provider / x-cmd-zdr / x-cmd-provider-deepseek-internal,
+	// traceparent, User-Agent:cli.
 	ccSetLowerHeader(req, "x-cli-environment", ccHeaderProdEnv)
 	ccSetLowerHeader(req, "x-command-code-version", helps.CCCLIVersion)
 	// Stable session id per apiKey (CLI reuses one session for the process).
@@ -133,6 +135,13 @@ func (e *CommandCodeExecutor) injectHeaders(req *http.Request, auth *cliproxyaut
 	// CMD_ZDR: official CLI sends x-cmd-zdr: "1" only when process.env.CMD_ZDR==="1".
 	if zdr := e.resolveString(auth, "cmd_zdr", ""); zdr == "1" {
 		ccSetLowerHeader(req, "x-cmd-zdr", "1")
+	}
+	// PROVIDER_DEEPSEEK_INTERNAL: official CLI sends x-cmd-provider-deepseek-internal: "1"
+	// when process.env.CMD_PROVIDER_DEEPSEEK_INTERNAL==="1".
+	if ds := e.resolveString(auth, "cmd_provider_deepseek_internal", ""); ds == "1" {
+		ccSetLowerHeader(req, "x-cmd-provider-deepseek-internal", "1")
+	} else if ds := e.resolveString(auth, "deepseek_internal", ""); ds == "1" {
+		ccSetLowerHeader(req, "x-cmd-provider-deepseek-internal", "1")
 	}
 	if tp := ccGenerateTraceparent(); tp != "" {
 		ccSetLowerHeader(req, "traceparent", tp)
@@ -467,7 +476,7 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 				emitCommandCodeTranslatedStreamChunk(ctx, out, to, responseFormat, req.Model, opts.OriginalRequest, translated, chunk, &param)
 
 			case chunkType == "reasoning-delta":
-				// command-code@1.14.0 consumeStream handles reasoning-start /
+				// command-code@1.44.0 consumeStream handles reasoning-start /
 				// reasoning-delta / reasoning-end. Forward deltas as OpenAI
 				// reasoning_content so clients that surface thinking see it.
 				text := gjson.GetBytes(line, "text").String()
@@ -515,7 +524,7 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 						InputTokens:  promptTokens,
 						OutputTokens: completionTokens,
 					}
-					// command-code@1.14.0 finish event: totalUsage.inputTokenDetails
+					// command-code@1.44.0 finish event: totalUsage.inputTokenDetails
 					// carries cacheReadTokens / cacheWriteTokens.
 					if cached := usageNode.Get("inputTokenDetails.cacheReadTokens"); cached.Exists() {
 						detail.CachedTokens = cached.Int()
@@ -530,7 +539,7 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 					}
 					reporter.publish(ctx, detail)
 				}
-				// command-code@1.14.0: finishReason falls back to rawFinishReason.
+				// command-code@1.44.0: finishReason falls back to rawFinishReason.
 				finishReasonRaw := gjson.GetBytes(line, "finishReason").String()
 				if finishReasonRaw == "" {
 					finishReasonRaw = gjson.GetBytes(line, "rawFinishReason").String()
@@ -541,14 +550,14 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 				emitCommandCodeTranslatedStreamChunk(ctx, out, to, responseFormat, req.Model, opts.OriginalRequest, translated, []byte("data: [DONE]"), &param)
 				doneSent = true
 
+			case chunkType == "tool-result":
+				// Server-executed tool result (e.g. from built-in web_fetch or tool_search).
+				// Command Code CLI tracks this internally as server_tool_result.
+				// In proxy stream, we consume it cleanly without erroring.
+				continue
+
 			case chunkType == "error":
-				msg := gjson.GetBytes(line, "error.message").String()
-				if msg == "" {
-					msg = gjson.GetBytes(line, "error").String()
-				}
-				if msg == "" {
-					msg = "stream error"
-				}
+				msg := parseCommandCodeStreamErrorMessage(line)
 				log.Debugf("commandcode: stream error msg=%s", msg)
 				reporter.publishFailure(ctx)
 				out <- cliproxyexecutor.StreamChunk{Err: fmt.Errorf("%s", msg)}
@@ -649,7 +658,7 @@ func (e *CommandCodeExecutor) buildHTTPRequest(ctx context.Context, baseURL, end
 
 func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opts cliproxyexecutor.Options, auth *cliproxyauth.Auth) []byte {
 	payload := req.Payload
-	// Wire model IDs match command-code@1.14.0 catalog canonical form
+	// Wire model IDs match command-code@1.44.0 catalog canonical form
 	// (bare Claude/GPT ids, org/name for gateway models) — not billing
 	// "provider:id" prefixes.
 	model := canonicalizeCommandCodeModel(req.Model)
@@ -680,7 +689,7 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 		maxTokens = gjson.GetBytes(translated, "max_completion_tokens").Int()
 	}
 	if maxTokens == 0 {
-		// Official CLI default: OS=64e3 in command-code@1.14.0.
+		// Official CLI default: OS/kv=64e3 in command-code@1.44.0.
 		maxTokens = 64000
 	}
 
@@ -692,13 +701,13 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 		sysPrompt = gjson.GetBytes(payload, "instructions").String()
 	}
 
-	// Params mirror command-code@1.14.0 postStream body.params: model, messages,
+	// Params mirror command-code@1.44.0 postStream body.params: model, messages,
 	// tools, system, max_tokens, stream (always true). Optional temperature /
 	// reasoning_effort are added below when present.
 	params := fmt.Sprintf(`"model":%s,"messages":%s,"tools":%s,"max_tokens":%d,"stream":true`,
 		ccEncode(model), messages, convertToolsForCC(translated), maxTokens)
 
-	// Body shape mirrors command-code@1.14.0 transport.postStream({route:RS,body}):
+	// Body shape mirrors command-code@1.44.0 transport.postStream({route:vv,body}):
 	// config + memory/taste/skills null + permissionMode + optional threadId
 	// (UUID only) + params. No "mode" for regular chat (CLI omits when unset).
 	// config.environment is the OS/Node.js info string (NOT "production", which
@@ -843,11 +852,16 @@ func normalizeCommandCodeBudget(budget int) (string, bool) {
 	}
 }
 
+// ccDateSuffixRegex matches an 8-digit date suffix (e.g. -20250514 or @20250514)
+// matching Cr in command-code@1.44.0 dist/cli.mjs.
+var ccDateSuffixRegex = regexp.MustCompile(`[-@]\d{8}$`)
+
 // canonicalizeCommandCodeModel maps client/billing model ids to the canonical
-// form used by command-code@1.14.0 on the /alpha/generate wire (params.model).
+// form used by command-code@1.44.0 on the /alpha/generate wire (params.model).
 // Billing prefixes (anthropic:/openai:) are stripped; known deprecated ids are
-// rewritten to their replacements (rr/or maps in dist/cli.mjs). Suffixes are
-// stripped so wire params.model contains only the clean base model.
+// rewritten to their replacements (vr/kr maps in dist/cli.mjs). 8-digit date
+// suffixes are stripped matching canonicalizeModelId. Suffixes are stripped so
+// wire params.model contains only the clean base model.
 func canonicalizeCommandCodeModel(model string) string {
 	model = strings.TrimSpace(model)
 	if model == "" {
@@ -866,14 +880,23 @@ func canonicalizeCommandCodeModel(model string) string {
 		base = base[len("openai:"):]
 	}
 	if repl, ok := commandCodeDeprecatedModels[strings.ToLower(base)]; ok {
-		base = repl
+		return repl
 	} else if repl, ok := commandCodeDeprecatedModels[base]; ok {
-		base = repl
+		return repl
+	}
+	// command-code@1.44.0: strip 8-digit date suffix ([-@]\d{8}$) matching canonicalizeModelId / Cr
+	if stripped := ccDateSuffixRegex.ReplaceAllString(base, ""); stripped != "" && stripped != base {
+		if repl, ok := commandCodeDeprecatedModels[strings.ToLower(stripped)]; ok {
+			return repl
+		} else if repl, ok := commandCodeDeprecatedModels[stripped]; ok {
+			return repl
+		}
+		base = stripped
 	}
 	return base
 }
 
-// commandCodeDeprecatedModels mirrors command-code@1.14.0 rr/or replacement maps.
+// commandCodeDeprecatedModels mirrors command-code@1.44.0 vr/kr replacement maps.
 var commandCodeDeprecatedModels = map[string]string{
 	"claude-sonnet-4-20250514":   "claude-sonnet-4-6",
 	"claude-sonnet-4-5-20250929": "claude-sonnet-4-6",
@@ -1066,12 +1089,59 @@ func commandCodeMessageContent(content gjson.Result) string {
 		return fmt.Sprintf(`[{"type":"text","text":%s}]`, ccEncode(content.String()))
 	}
 	if content.IsArray() {
-		return content.Raw
+		return formatCommandCodeContentArray(content)
 	}
 	if content.Raw != "" && content.Raw != "null" {
 		return fmt.Sprintf(`[{"type":"text","text":%s}]`, ccEncode(content.String()))
 	}
 	return "[]"
+}
+
+// formatCommandCodeContentArray converts message content blocks into the wire
+// shape expected by command-code@1.44.0 (toWireMessages in dist/cli.mjs).
+// Text blocks are formatted as {"type":"text","text":...}, and image blocks
+// (OpenAI image_url or Anthropic image) are formatted as
+// {"type":"image","image":<url or dataURL>,"mimeType":<mimeType>}.
+func formatCommandCodeContentArray(content gjson.Result) string {
+	var parts []string
+	for _, item := range content.Array() {
+		itemType := item.Get("type").String()
+		switch itemType {
+		case "text":
+			text := item.Get("text").String()
+			parts = append(parts, fmt.Sprintf(`{"type":"text","text":%s}`, ccEncode(text)))
+		case "image_url":
+			url := item.Get("image_url.url").String()
+			if url == "" {
+				url = item.Get("url").String()
+			}
+			mimeType := "image/jpeg"
+			if strings.HasPrefix(url, "data:") {
+				if semi := strings.Index(url, ";"); semi > 5 {
+					mimeType = url[5:semi]
+				}
+			}
+			parts = append(parts, fmt.Sprintf(`{"type":"image","image":%s,"mimeType":%s}`, ccEncode(url), ccEncode(mimeType)))
+		case "image":
+			if src := item.Get("source"); src.Exists() {
+				mediaType := src.Get("media_type").String()
+				if mediaType == "" {
+					mediaType = "image/jpeg"
+				}
+				data := src.Get("data").String()
+				dataURL := fmt.Sprintf("data:%s;base64,%s", mediaType, data)
+				parts = append(parts, fmt.Sprintf(`{"type":"image","image":%s,"mimeType":%s}`, ccEncode(dataURL), ccEncode(mediaType)))
+			} else {
+				parts = append(parts, item.Raw)
+			}
+		default:
+			parts = append(parts, item.Raw)
+		}
+	}
+	if len(parts) == 0 {
+		return "[]"
+	}
+	return "[" + strings.Join(parts, ",") + "]"
 }
 
 func commandCodeAssistantContent(msg gjson.Result, contentJSON string, pairedToolCallIDs map[string]bool) string {
@@ -1127,7 +1197,7 @@ func convertToolsForCC(translated []byte) string {
 		return "[]"
 	}
 
-	// toWireTools in command-code@1.14.0 emits {name, description, input_schema}
+	// toWireTools in command-code@1.44.0 emits {name, description, input_schema}
 	// only — no "type":"function" wrapper field.
 	var converted []json.RawMessage
 	for _, tool := range tools.Array() {
@@ -1303,6 +1373,22 @@ func commandCodeToolArguments(line []byte) string {
 	return "{}"
 }
 
+func parseCommandCodeStreamErrorMessage(line []byte) string {
+	msg := gjson.GetBytes(line, "error.message").String()
+	if msg == "" {
+		msg = gjson.GetBytes(line, "error").String()
+	}
+	if msg == "" {
+		return "stream error"
+	}
+	if idx := strings.Index(msg, "{"); idx != -1 {
+		if embedded := gjson.Get(msg[idx:], "error.message"); embedded.Exists() && embedded.String() != "" {
+			return embedded.String()
+		}
+	}
+	return msg
+}
+
 func mapCommandCodeFinishReason(reason string, sawToolCall bool) string {
 	switch strings.TrimSpace(reason) {
 	case "tool-calls", "tool_calls", "toolUse":
@@ -1405,28 +1491,26 @@ func (e *CommandCodeExecutor) aggregateStreamToOpenAI(ctx context.Context, body 
 					cachedTokens = cached.Int()
 				}
 			}
-			// command-code@1.14.0: finishReason falls back to rawFinishReason.
+			// command-code@1.44.0: finishReason falls back to rawFinishReason.
 			finishReasonRaw := gjson.GetBytes(line, "finishReason").String()
 			if finishReasonRaw == "" {
 				finishReasonRaw = gjson.GetBytes(line, "rawFinishReason").String()
 			}
 			finishReason = mapCommandCodeFinishReason(finishReasonRaw, sawToolCall)
 
+		case "tool-result":
+			// Server-executed tool result; skip as non-assistant content.
+			continue
+
 		case "error":
-			msg := gjson.GetBytes(line, "error.message").String()
-			if msg == "" {
-				msg = gjson.GetBytes(line, "error").String()
-			}
-			if msg == "" {
-				msg = "stream error"
-			}
+			msg := parseCommandCodeStreamErrorMessage(line)
 			return nil, usage.Detail{}, "", fmt.Errorf("%s", msg)
 
 		case "abort":
 			abortErr = errStreamAborted
 
 		default:
-			// tool-result and other non-content events — skip
+			// other non-content events — skip
 		}
 	}
 
