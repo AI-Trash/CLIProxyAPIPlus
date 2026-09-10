@@ -290,7 +290,7 @@ func upsertModelInfos(models []*ModelInfo, extras ...*ModelInfo) []*ModelInfo {
 }
 
 // GetCommandCodeModels returns the available model definitions for Command Code.
-// Synced from command-code@1.51.3 (npm) model catalog (Sr / yr / Tr in dist/cli.mjs)
+// Synced from command-code@1.53.0 (npm) model catalog (Sr / yr / Tr in dist/cli.mjs)
 // and the generated knowledge reference models.md.
 //
 // IDs are the CLI canonical wire form used in /alpha/generate params.model:
@@ -331,6 +331,7 @@ func GetCommandCodeModels() []*ModelInfo {
 		cc("deepseek/deepseek-v4-flash", "DeepSeek V4 Flash", "DeepSeek V4 Flash via Command Code", 1000000),
 		cc("deepseek/deepseek-v4-flash-vision-exp", "DeepSeek V4 Flash Vision (exp)", "DeepSeek V4 Flash Vision (exp) via Command Code", 1000000),
 		cc("deepseek/deepseek-v4-flash-fast", "DeepSeek V4 Flash Fast", "DeepSeek V4 Flash Fast via Command Code", 1000000),
+		cc("deepseek/deepseek-v4.1-flash", "DeepSeek V4.1 Flash", "DeepSeek V4.1 Flash via Command Code", 1000000),
 		cc("moonshotai/Kimi-K3", "Kimi K3", "Moonshot Kimi K3 via Command Code", 1000000),
 		cc("moonshotai/Kimi-K2.7-Code", "Kimi K2.7 Code", "Moonshot Kimi K2.7 Code via Command Code", 256000),
 		cc("moonshotai/Kimi-K2.7-Code-Highspeed", "Kimi K2.7 Code HighSpeed", "Moonshot Kimi K2.7 Code HighSpeed via Command Code", 262000),
@@ -373,6 +374,7 @@ func GetCommandCodeModels() []*ModelInfo {
 		cc("thinkingmachines/inkling-small", "Inkling Small", "Thinking Machines Inkling Small via Command Code", 1000000),
 		cc("poolside/laguna-s-2.1-free", "Laguna S 2.1", "Poolside Laguna S 2.1 (free) via Command Code", 256000),
 		cc("inclusionai/ling-3.0-flash-free", "Ling 3.0 Flash", "InclusionAI Ling 3.0 Flash (free) via Command Code", 256000),
+		cc("inclusionai/ling-3.0-flash-sante:free", "Ling 3.0 Flash Sante", "InclusionAI Ling 3.0 Flash Sante (free) via Command Code", 262144),
 		cc("meta/muse-spark-1.1", "Muse Spark 1.1", "Meta Muse Spark 1.1 via Command Code", 1048576),
 		cc("meta/muse-spark-1.2", "Muse Spark 1.2", "Meta Muse Spark 1.2 via Command Code", 1048576),
 		cc("meta/muse-spark-1.2-contributor", "Muse Spark 1.2 Contributor", "Meta Muse Spark 1.2 Contributor via Command Code", 1048576),
