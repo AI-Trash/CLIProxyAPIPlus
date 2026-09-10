@@ -94,7 +94,7 @@ func (e *CommandCodeExecutor) injectHeaders(req *http.Request, auth *cliproxyaut
 	}
 
 	// CLI fingerprint headers — the official CLI sets these in lowercase.
-	// Verified against command-code@1.51.3 buildCommandAuthHeaders / createApiClient.
+	// Verified against command-code@1.53.0 buildCommandAuthHeaders / createApiClient.
 	// Header set: x-cli-environment, x-command-code-version, x-session-id,
 	// x-project-slug, x-taste-learning, x-co-flag (INTERNAL_TEAM_FLAG_HEADER),
 	// optional x-oss-primary-provider / x-cmd-zdr / x-cmd-provider-deepseek-internal,
@@ -476,8 +476,8 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 				emitCommandCodeTranslatedStreamChunk(ctx, out, to, responseFormat, req.Model, opts.OriginalRequest, translated, chunk, &param)
 
 			case chunkType == "reasoning-delta":
-				// command-code@1.51.3 consumeStream handles reasoning-start /
-				// reasoning-delta / reasoning-end plus provider-metadata (new).
+				// command-code@1.53.0 consumeStream handles reasoning-start /
+				// reasoning-delta / reasoning-end plus provider-metadata.
 				// Forward deltas as OpenAI reasoning_content so clients that
 				// surface thinking see it.
 				text := gjson.GetBytes(line, "text").String()
@@ -525,7 +525,7 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 						InputTokens:  promptTokens,
 						OutputTokens: completionTokens,
 					}
-					// command-code@1.51.3 finish event: totalUsage.inputTokenDetails
+					// command-code@1.53.0 finish event: totalUsage.inputTokenDetails
 					// carries cacheReadTokens / cacheWriteTokens.
 					if cached := usageNode.Get("inputTokenDetails.cacheReadTokens"); cached.Exists() {
 						detail.CachedTokens = cached.Int()
@@ -540,7 +540,7 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 					}
 					reporter.publish(ctx, detail)
 				}
-				// command-code@1.51.3: finishReason falls back to rawFinishReason.
+				// command-code@1.53.0: finishReason falls back to rawFinishReason.
 				finishReasonRaw := gjson.GetBytes(line, "finishReason").String()
 				if finishReasonRaw == "" {
 					finishReasonRaw = gjson.GetBytes(line, "rawFinishReason").String()
@@ -558,9 +558,10 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 				continue
 
 			case chunkType == "provider-metadata":
-				// New in command-code@1.51.3 consumeStream: carries
-				// providerMetadata (e.g. Anthropic 1h-cache write tokens via
-				// readCacheWriteTokens1h). Informational only — the CLI merges
+				// New in command-code@1.51.3 (still current in 1.53.0
+				// consumeStream): carries providerMetadata (e.g. Anthropic
+				// 1h-cache write tokens via readCacheWriteTokens1h).
+				// Informational only — the CLI merges
 				// cacheWriteTokens1h into usage and continues. Never treat it
 				// as an error or completion signal.
 				continue
@@ -667,7 +668,7 @@ func (e *CommandCodeExecutor) buildHTTPRequest(ctx context.Context, baseURL, end
 
 func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opts cliproxyexecutor.Options, auth *cliproxyauth.Auth) []byte {
 	payload := req.Payload
-	// Wire model IDs match command-code@1.51.3 catalog canonical form
+	// Wire model IDs match command-code@1.53.0 catalog canonical form
 	// (bare Claude/GPT ids, org/name for gateway models) — not billing
 	// "provider:id" prefixes.
 	model := canonicalizeCommandCodeModel(req.Model)
@@ -698,7 +699,7 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 		maxTokens = gjson.GetBytes(translated, "max_completion_tokens").Int()
 	}
 	if maxTokens == 0 {
-		// Official CLI default: rk=64e3 in command-code@1.51.3
+		// Official CLI default: ok=64e3 in command-code@1.53.0
 		// (createModelClient maxOutputTokens fallback).
 		maxTokens = 64000
 	}
@@ -710,13 +711,13 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 	if sysPrompt == "" {
 		sysPrompt = gjson.GetBytes(payload, "instructions").String()
 	}
-	// Params mirror command-code@1.51.3 createModelClient body.params: model,
+	// Params mirror command-code@1.53.0 createModelClient body.params: model,
 	// messages, tools, system (or systemSections via toWireSystem for cache
 	// control), max_tokens, stream (always true). Optional temperature /
 	// reasoning_effort are added below when present.
 	params := fmt.Sprintf(`"model":%s,"messages":%s,"tools":%s,"max_tokens":%d,"stream":true`,
 		ccEncode(model), messages, convertToolsForCC(translated), maxTokens)
-	// Body shape mirrors command-code@1.51.3 transport.postStream({route:nk,body}):
+	// Body shape mirrors command-code@1.53.0 transport.postStream({route:rk,body}):
 	// config + memory/taste/skills null + permissionMode + optional threadId
 	// (UUID only) + params. No "mode" for regular chat (CLI omits when unset).
 	// config.environment is the runtime platform string (NOT "production",
@@ -862,11 +863,11 @@ func normalizeCommandCodeBudget(budget int) (string, bool) {
 }
 
 // ccDateSuffixRegex matches an 8-digit date suffix (e.g. -20250514 or @20250514)
-// matching Cr in command-code@1.51.3 dist/cli.mjs (unchanged from 1.44.0).
+// matching Cr in command-code@1.53.0 dist/cli.mjs (unchanged from 1.51.3).
 var ccDateSuffixRegex = regexp.MustCompile(`[-@]\d{8}$`)
 
 // canonicalizeCommandCodeModel maps client/billing model ids to the canonical
-// form used by command-code@1.51.3 on the /alpha/generate wire (params.model).
+// form used by command-code@1.53.0 on the /alpha/generate wire (params.model).
 // Billing prefixes (anthropic:/openai:) are stripped; known deprecated ids are
 // rewritten to their replacements (vr/kr maps in dist/cli.mjs). 8-digit date
 // suffixes are stripped matching canonicalizeModelId. Suffixes are stripped so
@@ -893,7 +894,7 @@ func canonicalizeCommandCodeModel(model string) string {
 	} else if repl, ok := commandCodeDeprecatedModels[base]; ok {
 		return repl
 	}
-	// command-code@1.51.3: strip 8-digit date suffix ([-@]\d{8}$) matching canonicalizeModelId / Cr
+	// command-code@1.53.0: strip 8-digit date suffix ([-@]\d{8}$) matching canonicalizeModelId / Cr
 	if stripped := ccDateSuffixRegex.ReplaceAllString(base, ""); stripped != "" && stripped != base {
 		if repl, ok := commandCodeDeprecatedModels[strings.ToLower(stripped)]; ok {
 			return repl
@@ -905,7 +906,7 @@ func canonicalizeCommandCodeModel(model string) string {
 	return base
 }
 
-// commandCodeDeprecatedModels mirrors command-code@1.51.3 vr/kr replacement maps
+// commandCodeDeprecatedModels mirrors command-code@1.53.0 vr/kr replacement maps
 var commandCodeDeprecatedModels = map[string]string{
 	"claude-sonnet-4-20250514":   "claude-sonnet-4-6",
 	"claude-sonnet-4-5-20250929": "claude-sonnet-4-6",
@@ -1107,7 +1108,7 @@ func commandCodeMessageContent(content gjson.Result) string {
 }
 
 // formatCommandCodeContentArray converts message content blocks into the wire
-// shape expected by command-code@1.51.3 (toWireMessages in dist/cli.mjs).
+// shape expected by command-code@1.53.0 (toWireMessages in dist/cli.mjs).
 // Text blocks are formatted as {"type":"text","text":...}, and image blocks
 // (OpenAI image_url or Anthropic image) are formatted as
 // {"type":"image","image":<url or dataURL>,"mimeType":<mimeType>}.
@@ -1206,7 +1207,7 @@ func convertToolsForCC(translated []byte) string {
 		return "[]"
 	}
 
-	// toWireTools in command-code@1.51.3 emits {name, description, input_schema}
+	// toWireTools in command-code@1.53.0 emits {name, description, input_schema}
 	// only — no "type":"function" wrapper field.
 	var converted []json.RawMessage
 	for _, tool := range tools.Array() {
@@ -1500,7 +1501,7 @@ func (e *CommandCodeExecutor) aggregateStreamToOpenAI(ctx context.Context, body 
 					cachedTokens = cached.Int()
 				}
 			}
-			// command-code@1.51.3: finishReason falls back to rawFinishReason.
+			// command-code@1.53.0: finishReason falls back to rawFinishReason.
 			finishReasonRaw := gjson.GetBytes(line, "finishReason").String()
 			if finishReasonRaw == "" {
 				finishReasonRaw = gjson.GetBytes(line, "rawFinishReason").String()
@@ -1512,8 +1513,9 @@ func (e *CommandCodeExecutor) aggregateStreamToOpenAI(ctx context.Context, body 
 			continue
 
 		case "provider-metadata":
-			// New in command-code@1.51.3 (readCacheWriteTokens1h): Anthropic
-			// 1h-cache write tokens. Informational only — skip like the CLI.
+			// New in command-code@1.51.3 (still current in 1.53.0):
+			// readCacheWriteTokens1h — Anthropic 1h-cache write tokens.
+			// Informational only — skip like the CLI.
 			continue
 
 		case "error":
