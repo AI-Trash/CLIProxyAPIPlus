@@ -81,7 +81,7 @@ func TestCommandCodeExecutor_ExecuteStream_CodexResponseFormat(t *testing.T) {
 }
 
 func TestCommandCodeExecutor_ExecuteStream_OpenAIFormatReasoning(t *testing.T) {
-	// command-code@1.44.0 stream events: reasoning-start/delta/end + text-delta + finish
+	// command-code@1.51.3 stream events: reasoning-start/delta/end + text-delta + finish
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Write([]byte(`{"type":"reasoning-start"}` + "\n"))
@@ -395,7 +395,7 @@ func TestCommandCodeExecutor_Execute_NonStreamResponsesFormat(t *testing.T) {
 }
 
 func TestCommandCodeExecutor_ExecuteStream_RawFinishReasonAndCacheWrite(t *testing.T) {
-	// command-code@1.44.0: finish event may carry rawFinishReason instead of
+	// command-code@1.51.3: finish event may carry rawFinishReason instead of
 	// finishReason, and inputTokenDetails.cacheWriteTokens.
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -492,7 +492,7 @@ func TestCommandCodeExecutor_buildRequestBody(t *testing.T) {
 			name:      "openai tools passed through",
 			payload:   `{"model":"test","messages":[{"role":"user","content":"inspect"}],"stream":true,"tools":[{"type":"function","function":{"name":"list_files","description":"List files","parameters":{"type":"object","properties":{"path":{"type":"string"}}}}}],"tool_choice":"auto","parallel_tool_calls":true}`,
 			srcFormat: "openai",
-			// command-code@1.44.0 toWireTools: {name, description, input_schema} only (no type:function)
+			// command-code@1.51.3 toWireTools: {name, description, input_schema} only (no type:function)
 			contains: []string{
 				`"name":"list_files"`,
 				`"description":"List files"`,
@@ -706,7 +706,7 @@ func TestCommandCodeExecutor_injectHeaders_CLIpfingerprint(t *testing.T) {
 	if got := getLower("x-co-flag"); got != "false" {
 		t.Errorf("x-co-flag = %q, want false", got)
 	}
-	// Optional headers from command-code@1.44.0: only sent when configured.
+	// Optional headers from command-code@1.51.3: only sent when configured.
 	if got := getLower("x-oss-primary-provider"); got != "" {
 		t.Errorf("x-oss-primary-provider = %q, want empty by default", got)
 	}
@@ -852,5 +852,59 @@ func TestCommandCodeExecutor_ExecuteStream_ToolResultAndStructuredError(t *testi
 	embeddedErr := parseCommandCodeStreamErrorMessage([]byte(`{"type":"error","error":"500 {\"error\":{\"message\":\"quota exceeded\"}}"}`))
 	if embeddedErr != "quota exceeded" {
 		t.Errorf("got %q, want 'quota exceeded'", embeddedErr)
+	}
+}
+
+func TestCommandCodeExecutor_ExecuteStream_ProviderMetadataIgnored(t *testing.T) {
+	// command-code@1.51.3 consumeStream handles a "provider-metadata" event
+	// (providerMetadata.anthropic usage → cacheWriteTokens1h) as informational
+	// only. The proxy must skip it without erroring and still complete.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte(`{"type":"text-delta","text":"hi"}` + "\n"))
+		w.Write([]byte(`{"type":"provider-metadata","providerMetadata":{"anthropic":{"usage":{"cache_creation":{"ephemeral_1h_input_tokens":7}}}}}` + "\n"))
+		w.Write([]byte(`{"type":"text-delta","text":" there"}` + "\n"))
+		w.Write([]byte(`{"type":"finish","finishReason":"end_turn","totalUsage":{"inputTokens":10,"outputTokens":2}}` + "\n"))
+	}))
+	defer upstream.Close()
+
+	exec := NewCommandCodeExecutor(&config.Config{})
+	auth := &cliproxyauth.Auth{
+		ID:         "test-auth",
+		Provider:   "commandcode",
+		Metadata:   map[string]any{"api_key": "test-key", "base_url": upstream.URL},
+		Attributes: map[string]string{"base_url": upstream.URL},
+	}
+
+	req := cliproxyexecutor.Request{
+		Model:   "deepseek/deepseek-v4-pro",
+		Payload: []byte(`{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hi"}],"stream":true}`),
+	}
+	opts := cliproxyexecutor.Options{
+		Stream:          true,
+		SourceFormat:    sdktranslator.FromString("openai"),
+		OriginalRequest: req.Payload,
+	}
+
+	result, err := exec.ExecuteStream(context.Background(), auth, req, opts)
+	if err != nil {
+		t.Fatalf("ExecuteStream failed: %v", err)
+	}
+
+	var chunks []string
+	for ch := range result.Chunks {
+		if ch.Err != nil {
+			t.Fatalf("unexpected chunk error: %v", ch.Err)
+		}
+		if ch.Payload != nil {
+			chunks = append(chunks, string(ch.Payload))
+		}
+	}
+	joined := strings.Join(chunks, "\n")
+	if !strings.Contains(joined, "hi") {
+		t.Errorf("missing text around provider-metadata: %s", joined)
+	}
+	if !strings.Contains(joined, `"finish_reason":"stop"`) {
+		t.Errorf("stream did not complete after provider-metadata: %s", joined)
 	}
 }
