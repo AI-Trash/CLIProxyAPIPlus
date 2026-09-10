@@ -290,7 +290,7 @@ func upsertModelInfos(models []*ModelInfo, extras ...*ModelInfo) []*ModelInfo {
 }
 
 // GetCommandCodeModels returns the available model definitions for Command Code.
-// Synced from command-code@1.44.0 (npm) model catalog (Sr / yr / Tr in dist/cli.mjs)
+// Synced from command-code@1.51.3 (npm) model catalog (Sr / yr / Tr in dist/cli.mjs)
 // and the generated knowledge reference models.md.
 //
 // IDs are the CLI canonical wire form used in /alpha/generate params.model:
@@ -318,6 +318,7 @@ func GetCommandCodeModels() []*ModelInfo {
 		cc("claude-opus-4-7", "Claude Opus 4.7", "Anthropic Claude Opus 4.7 via Command Code", 1000000),
 		cc("claude-haiku-4-5-20251001", "Claude Haiku 4.5", "Anthropic Claude Haiku 4.5 via Command Code", 200000),
 		// ── Premium models (OpenAI) ──
+		cc("gpt-6-astra", "GPT-6 Astra", "OpenAI GPT-6 Astra via Command Code", 1050000),
 		cc("gpt-5.6-sol", "GPT-5.6 Sol", "OpenAI GPT-5.6 Sol via Command Code", 1050000),
 		cc("gpt-5.6-terra", "GPT-5.6 Terra", "OpenAI GPT-5.6 Terra via Command Code", 1050000),
 		cc("gpt-5.6-luna", "GPT-5.6 Luna", "OpenAI GPT-5.6 Luna via Command Code", 1050000),
