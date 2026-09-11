@@ -667,7 +667,7 @@ nonstream-keepalive-interval: 0
 #   3. Or manually create a JSON file in the auths/ directory:
 #      {"type": "commandcode", "api_key": "cc_...", "email": "user@example.com"}
 #
-# Model aliases (synced from command-code@1.53.0).
+# Model aliases (synced from command-code@1.53.1).
 # name  = upstream / registry id (canonical wire form sent to /alpha/generate)
 # alias = client-facing short name
 # Claude/GPT bare ids are already the wire form; aliases mainly shorten

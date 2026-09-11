@@ -290,7 +290,7 @@ func upsertModelInfos(models []*ModelInfo, extras ...*ModelInfo) []*ModelInfo {
 }
 
 // GetCommandCodeModels returns the available model definitions for Command Code.
-// Synced from command-code@1.53.0 (npm) model catalog (Sr / yr / Tr in dist/cli.mjs)
+// Synced from command-code@1.53.1 (npm) model catalog (Sr / yr / Tr in dist/cli.mjs)
 // and the generated knowledge reference models.md.
 //
 // IDs are the CLI canonical wire form used in /alpha/generate params.model:
