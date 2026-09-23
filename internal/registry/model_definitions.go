@@ -290,12 +290,14 @@ func upsertModelInfos(models []*ModelInfo, extras ...*ModelInfo) []*ModelInfo {
 }
 
 // GetCommandCodeModels returns the available model definitions for Command Code.
-// Synced from command-code@1.53.1 (npm) model catalog (Sr / yr / Tr in dist/cli.mjs)
-// and the generated knowledge reference models.md.
+// Synced from command-code@1.64.0 (npm) model catalog (Cr known-id Set / kr
+// reasoning-effort Map in dist/cli.mjs) and the generated knowledge reference
+// models.md.
 //
 // IDs are the CLI canonical wire form used in /alpha/generate params.model:
 // bare Anthropic/OpenAI names (claude-*, gpt-*), org/name for gateway models.
-// Hidden free variants (tencent/Hy3 free, MiniMax-M3-Free) are omitted.
+// Hidden free variants (tencent/Hy3, MiniMax-M3-Free, MiniMax-M2.7-Free and
+// meituan/LongCat-2.0:free, all marked hidden in the CLI catalog) are omitted.
 func GetCommandCodeModels() []*ModelInfo {
 	now := int64(1732752000)
 	ep := []string{"/chat/completions", "/responses"}
@@ -313,12 +315,15 @@ func GetCommandCodeModels() []*ModelInfo {
 		cc("claude-sonnet-4-6", "Claude Sonnet 4.6", "Anthropic Claude Sonnet 4.6 via Command Code", 1000000),
 		cc("claude-fable-5-1", "Claude Fable 5.1", "Anthropic Claude Fable 5.1 via Command Code", 1000000),
 		cc("claude-fable-5", "Claude Fable 5", "Anthropic Claude Fable 5 via Command Code", 1000000),
+		cc("claude-opus-5-5", "Claude Opus 5.5", "Anthropic Claude Opus 5.5 via Command Code", 1000000),
 		cc("claude-opus-5", "Claude Opus 5", "Anthropic Claude Opus 5 via Command Code", 1000000),
 		cc("claude-opus-4-8", "Claude Opus 4.8", "Anthropic Claude Opus 4.8 via Command Code", 1000000),
 		cc("claude-opus-4-7", "Claude Opus 4.7", "Anthropic Claude Opus 4.7 via Command Code", 1000000),
 		cc("claude-haiku-4-5-20251001", "Claude Haiku 4.5", "Anthropic Claude Haiku 4.5 via Command Code", 200000),
 		// ── Premium models (OpenAI) ──
 		cc("gpt-6-astra", "GPT-6 Astra", "OpenAI GPT-6 Astra via Command Code", 1050000),
+		cc("gpt-6-sol", "GPT-6 Sol", "OpenAI GPT-6 Sol via Command Code", 1050000),
+		cc("gpt-6-luna", "GPT-6 Luna", "OpenAI GPT-6 Luna via Command Code", 1050000),
 		cc("gpt-5.6-sol", "GPT-5.6 Sol", "OpenAI GPT-5.6 Sol via Command Code", 1050000),
 		cc("gpt-5.6-terra", "GPT-5.6 Terra", "OpenAI GPT-5.6 Terra via Command Code", 1050000),
 		cc("gpt-5.6-luna", "GPT-5.6 Luna", "OpenAI GPT-5.6 Luna via Command Code", 1050000),
@@ -338,6 +343,7 @@ func GetCommandCodeModels() []*ModelInfo {
 		cc("moonshotai/Kimi-K2.6", "Kimi K2.6", "Moonshot Kimi K2.6 via Command Code", 256000),
 		cc("moonshotai/Kimi-K2.5", "Kimi K2.5", "Moonshot Kimi K2.5 via Command Code", 256000),
 		cc("z-ai/glm-5.3-flash", "GLM-5.3 Flash", "Zhipu GLM-5.3 Flash via Command Code", 1048576),
+		cc("z-ai/glm-5.3-flashx", "GLM-5.3 FlashX", "Zhipu GLM-5.3 FlashX via Command Code", 1000000),
 		cc("zai-org/GLM-5.3", "GLM-5.3", "Zhipu GLM-5.3 via Command Code", 1000000),
 		cc("zai-org/GLM-5.2", "GLM-5.2", "Zhipu GLM-5.2 via Command Code", 1000000),
 		cc("zai-org/GLM-5.2-Fast", "GLM-5.2 Fast", "Zhipu GLM-5.2 Fast via Command Code", 1000000),
@@ -346,10 +352,14 @@ func GetCommandCodeModels() []*ModelInfo {
 		cc("MiniMaxAI/MiniMax-M3", "MiniMax M3", "MiniMax M3 via Command Code", 1000000),
 		cc("MiniMaxAI/MiniMax-M2.7", "MiniMax M2.7", "MiniMax M2.7 via Command Code", 200000),
 		cc("MiniMaxAI/MiniMax-M2.5", "MiniMax M2.5", "MiniMax M2.5 via Command Code", 200000),
+		cc("xiaomi/mimo-v2.6-pro", "MiMo V2.6 Pro", "Xiaomi MiMo V2.6 Pro via Command Code", 1048576),
+		cc("xiaomi/mimo-v2.6-pro-ultraspeed", "MiMo V2.6 Pro UltraSpeed", "Xiaomi MiMo V2.6 Pro UltraSpeed via Command Code", 1048576),
+		cc("xiaomi/mimo-v2.6-flash", "MiMo V2.6 Flash", "Xiaomi MiMo V2.6 Flash via Command Code", 1048576),
 		cc("xiaomi/mimo-v2.5-pro", "MiMo V2.5 Pro", "Xiaomi MiMo V2.5 Pro via Command Code", 1000000),
 		cc("xiaomi/mimo-v2.5", "MiMo V2.5", "Xiaomi MiMo V2.5 via Command Code", 1000000),
 		cc("Qwen/Qwen3.6-Max-Preview", "Qwen 3.6 Max Preview", "Qwen 3.6 Max Preview via Command Code", 200000),
 		cc("Qwen/Qwen3.6-Plus", "Qwen 3.6 Plus", "Qwen 3.6 Plus via Command Code", 200000),
+		cc("Qwen/Qwen3.8-Omni-Flash", "Qwen 3.8 Omni Flash", "Qwen 3.8 Omni Flash via Command Code", 1000000),
 		cc("Qwen/Qwen3.8-Max-0902", "Qwen 3.8 Max 0902", "Qwen 3.8 Max 0902 via Command Code", 1000000),
 		cc("Qwen/Qwen3.8-Max", "Qwen 3.8 Max", "Qwen 3.8 Max via Command Code", 1000000),
 		cc("Qwen/Qwen3.8-27B", "Qwen 3.8 27B", "Qwen 3.8 27B via Command Code", 262144),
@@ -357,7 +367,8 @@ func GetCommandCodeModels() []*ModelInfo {
 		cc("Qwen/Qwen3.7-Max", "Qwen 3.7 Max", "Qwen 3.7 Max via Command Code", 1000000),
 		cc("Qwen/Qwen3.7-Plus", "Qwen 3.7 Plus", "Qwen 3.7 Plus via Command Code", 1000000),
 		cc("Qwen/Qwen3.7-Flash", "Qwen 3.7 Flash", "Qwen 3.7 Flash via Command Code", 1000000),
-		cc("meituan/LongCat-2.0:free", "LongCat 2.0", "Meituan LongCat 2.0 (free) via Command Code", 1048576),
+		cc("meituan/LongCat-2.0", "LongCat 2.0", "Meituan LongCat 2.0 via Command Code", 1048576),
+		cc("stepfun/Step-5-Preview", "Step 5 Preview", "StepFun Step 5 Preview via Command Code", 1000000),
 		cc("stepfun/Step-3.7-Flash", "Step 3.7 Flash", "StepFun Step 3.7 Flash via Command Code", 256000),
 		cc("stepfun/Step-3.5-Flash", "Step 3.5 Flash", "StepFun Step 3.5 Flash via Command Code", 1000000),
 		cc("tencent/hy4-preview", "Tencent Hy4 Preview", "Tencent Hy4 Preview via Command Code", 1048576),
@@ -382,6 +393,7 @@ func GetCommandCodeModels() []*ModelInfo {
 		cc("meta/muse-spark-1.3-contributor", "Muse Spark 1.3 Contributor", "Meta Muse Spark 1.3 Contributor via Command Code", 1048576),
 		cc("xai/grok-4.5", "Grok 4.5", "xAI Grok 4.5 via Command Code", 500000),
 		cc("xai/grok-4.6", "Grok 4.6", "xAI Grok 4.6 via Command Code", 500000),
+		cc("xai/grok-4.7", "Grok 4.7", "xAI Grok 4.7 via Command Code", 500000),
 	}
 }
 
