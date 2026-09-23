@@ -81,7 +81,7 @@ func TestCommandCodeExecutor_ExecuteStream_CodexResponseFormat(t *testing.T) {
 }
 
 func TestCommandCodeExecutor_ExecuteStream_OpenAIFormatReasoning(t *testing.T) {
-	// command-code@1.53.1 stream events: reasoning-start/delta/end + text-delta + finish
+	// command-code@1.64.0 stream events: reasoning-start/delta/end + text-delta + finish
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Write([]byte(`{"type":"reasoning-start"}` + "\n"))
@@ -395,7 +395,7 @@ func TestCommandCodeExecutor_Execute_NonStreamResponsesFormat(t *testing.T) {
 }
 
 func TestCommandCodeExecutor_ExecuteStream_RawFinishReasonAndCacheWrite(t *testing.T) {
-	// command-code@1.53.1: finish event may carry rawFinishReason instead of
+	// command-code@1.64.0: finish event may carry rawFinishReason instead of
 	// finishReason, and inputTokenDetails.cacheWriteTokens.
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -473,8 +473,17 @@ func TestCommandCodeExecutor_buildRequestBody(t *testing.T) {
 			name:        "body shape matches official CLI",
 			payload:     `{"model":"test","messages":[{"role":"user","content":"hi"}],"stream":true}`,
 			srcFormat:   "openai",
-			contains:    []string{`"permissionMode":"standard"`, `Node.js`, `"tools":[]`, `"memory":null`, `"taste":null`, `"skills":null`, `"threadId":`},
-			notContains: []string{`"mode":"tool-desc"`, `"environment":"production"`, `"temperature"`},
+			contains:    []string{`"permissionMode":"standard"`, `"tools":[]`, `"memory":null`, `"taste":null`, `"skills":null`, `"threadId":`},
+			notContains: []string{`"mode":"tool-desc"`, `"environment":"production"`, `"temperature"`, `Node.js`},
+		},
+		{
+			// config.environment mirrors buildServerConfig() → runtime.platform(),
+			// i.e. the bare Node platform id (win32/darwin/linux), not the
+			// "<platform>-<arch>, Node.js vX" descriptor the CLI stopped sending.
+			name:      "config environment is the bare platform id",
+			payload:   `{"model":"test","messages":[{"role":"user","content":"hi"}],"stream":true}`,
+			srcFormat: "openai",
+			contains:  []string{`"environment":"` + helps.CCSessionContextFor("").Environment + `"`},
 		},
 		{
 			name:      "responses input handled",
@@ -492,7 +501,7 @@ func TestCommandCodeExecutor_buildRequestBody(t *testing.T) {
 			name:      "openai tools passed through",
 			payload:   `{"model":"test","messages":[{"role":"user","content":"inspect"}],"stream":true,"tools":[{"type":"function","function":{"name":"list_files","description":"List files","parameters":{"type":"object","properties":{"path":{"type":"string"}}}}}],"tool_choice":"auto","parallel_tool_calls":true}`,
 			srcFormat: "openai",
-			// command-code@1.53.1 toWireTools: {name, description, input_schema} only (no type:function)
+			// command-code@1.64.0 toWireTools: {name, description, input_schema} only (no type:function)
 			contains: []string{
 				`"name":"list_files"`,
 				`"description":"List files"`,
@@ -688,7 +697,7 @@ func TestCommandCodeExecutor_injectHeaders_CLIpfingerprint(t *testing.T) {
 		}
 		return vals[0]
 	}
-	for _, lowerKey := range []string{"x-cli-environment", "x-command-code-version", "x-session-id", "x-project-slug", "x-taste-learning", "x-co-flag", "traceparent", "accept", "accept-language", "accept-encoding"} {
+	for _, lowerKey := range []string{"x-cli-environment", "x-command-code-version", "x-session-id", "x-project-slug", "x-taste-learning", "traceparent", "accept", "accept-language", "accept-encoding"} {
 		if v := getLower(lowerKey); v == "" {
 			t.Errorf("missing required CLI header %q (lowercase)", lowerKey)
 		}
@@ -703,10 +712,12 @@ func TestCommandCodeExecutor_injectHeaders_CLIpfingerprint(t *testing.T) {
 	if got := getLower("x-taste-learning"); got != "true" {
 		t.Errorf("x-taste-learning = %q, want true", got)
 	}
-	if got := getLower("x-co-flag"); got != "false" {
-		t.Errorf("x-co-flag = %q, want false", got)
+	// INTERNAL_TEAM_FLAG_HEADER ("x-co-flag") was dropped from the CLI in
+	// 1.44.0; sending it would mark the request as a non-CLI client.
+	if got := getLower("x-co-flag"); got != "" {
+		t.Errorf("x-co-flag = %q, want empty (removed from CLI in 1.44.0)", got)
 	}
-	// Optional headers from command-code@1.53.1: only sent when configured.
+	// Optional headers from command-code@1.64.0: only sent when configured.
 	if got := getLower("x-oss-primary-provider"); got != "" {
 		t.Errorf("x-oss-primary-provider = %q, want empty by default", got)
 	}
@@ -738,7 +749,7 @@ func TestCommandCodeExecutor_injectHeaders_CLIpfingerprint(t *testing.T) {
 	// Verify no Title-Case duplicates exist for the x-* headers.
 	// (User-Agent's canonical form is itself "User-Agent" with caps, so it is
 	// always present and excluded from this check.)
-	for _, titleKey := range []string{"X-Cli-Environment", "X-Command-Code-Version", "X-Session-Id", "X-Project-Slug", "X-Taste-Learning", "X-Co-Flag", "Traceparent"} {
+	for _, titleKey := range []string{"X-Cli-Environment", "X-Command-Code-Version", "X-Session-Id", "X-Project-Slug", "X-Taste-Learning", "Traceparent"} {
 		if _, ok := httpReq.Header[titleKey]; ok {
 			t.Errorf("Title-Case header key %q should not exist (use lowercase)", titleKey)
 		}
@@ -856,7 +867,7 @@ func TestCommandCodeExecutor_ExecuteStream_ToolResultAndStructuredError(t *testi
 }
 
 func TestCommandCodeExecutor_ExecuteStream_ProviderMetadataIgnored(t *testing.T) {
-	// command-code@1.53.1 consumeStream handles a "provider-metadata" event
+	// command-code@1.64.0 consumeStream handles a "provider-metadata" event
 	// (providerMetadata.anthropic usage → cacheWriteTokens1h) as informational
 	// only. The proxy must skip it without erroring and still complete.
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
