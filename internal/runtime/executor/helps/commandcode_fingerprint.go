@@ -19,14 +19,16 @@ import (
 // CCCLIVersion is the official command-code CLI version we fingerprint as.
 // Keep this in lockstep with https://www.npmjs.com/package/command-code (latest).
 // Used for x-command-code-version on generate, fingerprint/record, and login.
-// Synced from command-code@1.53.1 (package.json HelpMessage " v" literal).
-const CCCLIVersion = "1.53.1"
+// Synced from command-code@1.64.0 (package.json HelpMessage " v" literal,
+// createApiClient cliVersion).
+const CCCLIVersion = "1.64.0"
 
 // ccFingerprintSalt is the device-fingerprint salt embedded in the official
 // command-code CLI (>=0.40.x). It is publicly visible in the npm bundle and
 // is required to compute a thumbmark that the server can verify against
 // incoming /alpha/fingerprint/record submissions.
-// Verified against command-code@1.53.1 dist/cli.mjs ("command-code:device-fingerprint:v1").
+// Verified against command-code@1.64.0 dist/cli.mjs ("command-code:device-fingerprint:v1",
+// unchanged since 0.40.x; collectorVersion is still 1).
 const ccFingerprintSalt = "command-code:device-fingerprint:v1"
 
 // ccFingerprint is the payload posted to /alpha/fingerprint/record. The
@@ -375,7 +377,7 @@ func CCSessionIDFor(apiKey string) string {
 
 // ccSessionContext is the set of fake environment values that are stable per
 // apiKey for the lifetime of the process. It mirrors the shape produced by
-// the official CLI's getEnvironmentContext() / gatherRawSignals() but is
+// the official CLI's buildServerConfig() / gatherRawSignals() but is
 // populated from the seeded RNG instead of the local machine.
 type ccSessionContext struct {
 	WorkingDir    string
@@ -461,7 +463,10 @@ func buildSessionContext(signals ccSignals) *ccSessionContext {
 		commits = append(commits, hex.EncodeToString(h[:7]))
 	}
 
-	env := fmt.Sprintf("%s-%s, Node.js v%s", signals.Platform, signals.Arch, "22.11.0")
+	// config.environment mirrors buildServerConfig() in the official CLI, which
+	// emits runtime.platform() — the bare Node platform id ("win32"/"darwin"/
+	// "linux"), NOT the older "<platform>-<arch>, Node.js vX" descriptor.
+	env := signals.Platform
 
 	return &ccSessionContext{
 		WorkingDir:    workingDir,
@@ -522,7 +527,7 @@ func RecordFingerprintIfNeeded(baseURL, apiKey string) {
 }
 
 // applyFingerprintHeaders sets the same headers the official CLI attaches to
-// /alpha/fingerprint/record (recordCliFingerprint in command-code@1.53.1).
+// /alpha/fingerprint/record (recordCliFingerprint in command-code@1.64.0).
 // Keys are stored lowercase to match Node fetch/undici over HTTP/1.1.
 func applyFingerprintHeaders(req *http.Request, apiKey string) {
 	setLower := func(key, value string) {
