@@ -1583,6 +1583,7 @@ func TestPlusServerModulesCallbacksAndCompatibilityRoutesRegistered(t *testing.T
 		"GET /iflow/callback",
 		"POST /api/event_logging/batch",
 		"GET /v0/management/copilot-quota",
+		"GET /v0/management/commandcode-quota",
 	}
 	for _, route := range expected {
 		if _, ok := routes[route]; !ok {
