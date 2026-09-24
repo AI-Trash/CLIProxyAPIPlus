@@ -667,7 +667,7 @@ nonstream-keepalive-interval: 0
 #   3. Or manually create a JSON file in the auths/ directory:
 #      {"type": "commandcode", "api_key": "cc_...", "email": "user@example.com"}
 #
-# Model aliases (synced from command-code@1.64.0).
+# Model aliases (synced from command-code@1.65.0).
 # name  = upstream / registry id (canonical wire form sent to /alpha/generate)
 # alias = client-facing short name
 # Claude/GPT bare ids are already the wire form; aliases mainly shorten
@@ -808,6 +808,9 @@ nonstream-keepalive-interval: 0
 #       alias: "tencent-hy3"
 #     - name: "tencent/hy3-paid"
 #       alias: "hy3"
+#     ── Stealth ──
+#     - name: "stealth/space-bunny-alpha"
+#       alias: "space-bunny-alpha"
 #     ── Gemini (Pro+ plans) ──
 #     - name: "google/gemini-3.8-flash"
 #       alias: "gemini-3.8-flash"

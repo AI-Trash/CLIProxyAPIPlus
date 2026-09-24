@@ -290,7 +290,7 @@ func upsertModelInfos(models []*ModelInfo, extras ...*ModelInfo) []*ModelInfo {
 }
 
 // GetCommandCodeModels returns the available model definitions for Command Code.
-// Synced from command-code@1.64.0 (npm) model catalog (Cr known-id Set / kr
+// Synced from command-code@1.65.0 (npm) model catalog (Cr known-id Set / kr
 // reasoning-effort Map in dist/cli.mjs) and the generated knowledge reference
 // models.md.
 //
@@ -373,6 +373,8 @@ func GetCommandCodeModels() []*ModelInfo {
 		cc("stepfun/Step-3.5-Flash", "Step 3.5 Flash", "StepFun Step 3.5 Flash via Command Code", 1000000),
 		cc("tencent/hy4-preview", "Tencent Hy4 Preview", "Tencent Hy4 Preview via Command Code", 1048576),
 		cc("tencent/hy3-paid", "Tencent Hy3", "Tencent Hy3 via Command Code", 262144),
+		// ── Stealth ──
+		cc("stealth/space-bunny-alpha", "Space Bunny Alpha", "Stealth model via Command Code", 1000000),
 		cc("google/gemini-3.8-flash", "Gemini 3.8 Flash", "Google Gemini 3.8 Flash via Command Code", 1000000),
 		cc("google/gemini-3.7-flash", "Gemini 3.7 Flash", "Google Gemini 3.7 Flash via Command Code", 1048576),
 		cc("google/gemini-3.6-flash", "Gemini 3.6 Flash", "Google Gemini 3.6 Flash via Command Code", 1000000),
