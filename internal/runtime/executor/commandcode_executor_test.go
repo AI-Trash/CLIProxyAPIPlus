@@ -81,7 +81,7 @@ func TestCommandCodeExecutor_ExecuteStream_CodexResponseFormat(t *testing.T) {
 }
 
 func TestCommandCodeExecutor_ExecuteStream_OpenAIFormatReasoning(t *testing.T) {
-	// command-code@1.64.0 stream events: reasoning-start/delta/end + text-delta + finish
+	// command-code@1.65.0 stream events: reasoning-start/delta/end + text-delta + finish
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Write([]byte(`{"type":"reasoning-start"}` + "\n"))
@@ -395,7 +395,7 @@ func TestCommandCodeExecutor_Execute_NonStreamResponsesFormat(t *testing.T) {
 }
 
 func TestCommandCodeExecutor_ExecuteStream_RawFinishReasonAndCacheWrite(t *testing.T) {
-	// command-code@1.64.0: finish event may carry rawFinishReason instead of
+	// command-code@1.65.0: finish event may carry rawFinishReason instead of
 	// finishReason, and inputTokenDetails.cacheWriteTokens.
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -501,7 +501,7 @@ func TestCommandCodeExecutor_buildRequestBody(t *testing.T) {
 			name:      "openai tools passed through",
 			payload:   `{"model":"test","messages":[{"role":"user","content":"inspect"}],"stream":true,"tools":[{"type":"function","function":{"name":"list_files","description":"List files","parameters":{"type":"object","properties":{"path":{"type":"string"}}}}}],"tool_choice":"auto","parallel_tool_calls":true}`,
 			srcFormat: "openai",
-			// command-code@1.64.0 toWireTools: {name, description, input_schema} only (no type:function)
+			// command-code@1.65.0 toWireTools: {name, description, input_schema} only (no type:function)
 			contains: []string{
 				`"name":"list_files"`,
 				`"description":"List files"`,
@@ -717,7 +717,7 @@ func TestCommandCodeExecutor_injectHeaders_CLIpfingerprint(t *testing.T) {
 	if got := getLower("x-co-flag"); got != "" {
 		t.Errorf("x-co-flag = %q, want empty (removed from CLI in 1.44.0)", got)
 	}
-	// Optional headers from command-code@1.64.0: only sent when configured.
+	// Optional headers from command-code@1.65.0: only sent when configured.
 	if got := getLower("x-oss-primary-provider"); got != "" {
 		t.Errorf("x-oss-primary-provider = %q, want empty by default", got)
 	}
@@ -867,7 +867,7 @@ func TestCommandCodeExecutor_ExecuteStream_ToolResultAndStructuredError(t *testi
 }
 
 func TestCommandCodeExecutor_ExecuteStream_ProviderMetadataIgnored(t *testing.T) {
-	// command-code@1.64.0 consumeStream handles a "provider-metadata" event
+	// command-code@1.65.0 consumeStream handles a "provider-metadata" event
 	// (providerMetadata.anthropic usage → cacheWriteTokens1h) as informational
 	// only. The proxy must skip it without erroring and still complete.
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
