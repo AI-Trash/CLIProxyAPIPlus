@@ -21,6 +21,7 @@ func TestCommandCodePlanFor_LongestPrefixWins(t *testing.T) {
 	}{
 		{planID: "individual-goat", name: "GOAT", monthly: 70},
 		{planID: "individual-go", name: "Go", monthly: 10},
+		{planID: "individual-go-v1", name: "Go", monthly: 10},
 		{planID: "individual-pro-v1", name: "Pro", monthly: 80},
 		{planID: "individual-pro", name: "Pro", monthly: 30},
 		{planID: "individual_go", name: "Go", monthly: 10},
@@ -84,8 +85,48 @@ func TestCommandCodeBuildQuotaView_DerivedCredits(t *testing.T) {
 	if usage.UsageURL != "https://commandcode.ai/tester/settings/usage" {
 		t.Errorf("UsageURL = %q", usage.UsageURL)
 	}
+	// The CLI renders the same URL with the scheme stripped.
+	if usage.UsageURLDisplay != "commandcode.ai/tester/settings/usage" {
+		t.Errorf("UsageURLDisplay = %q", usage.UsageURLDisplay)
+	}
 	if usage.DaysLeft == nil || *usage.DaysLeft != 2 {
 		t.Errorf("DaysLeft = %v, want 2", usage.DaysLeft)
+	}
+}
+
+// TestCommandCodeBuildQuotaView_StatusMustBeExactlyActive pins the CLI's exact
+// status comparison: only the literal "active" uses the plan allowance as pool.
+func TestCommandCodeBuildQuotaView_StatusMustBeExactlyActive(t *testing.T) {
+	quota := &CommandCodeQuota{
+		Credits: &CommandCodeQuotaCredits{
+			Credits: CommandCodeQuotaCreditBalances{MonthlyCredits: 1},
+		},
+		Subscription: &CommandCodeQuotaSubscription{
+			Data: &CommandCodeQuotaSubscriptionData{PlanID: "individual-go", Status: "Active"},
+		},
+		Summary: &CommandCodeQuotaSummary{TotalCost: 4},
+	}
+	commandCodeBuildQuotaView(quota)
+
+	if quota.Usage.TotalPool != 5 {
+		t.Errorf("TotalPool = %v, want 5 (spend + remaining for non-exact status)", quota.Usage.TotalPool)
+	}
+}
+
+// TestCommandCodeBuildQuotaView_EmptyOrgLoginSuppressesUsageURL mirrors the
+// CLI's `org?.login ?? user?.userName`: an org object with an empty login wins
+// over the user name and yields no URL at all.
+func TestCommandCodeBuildQuotaView_EmptyOrgLoginSuppressesUsageURL(t *testing.T) {
+	quota := &CommandCodeQuota{
+		Whoami: &CommandCodeQuotaWhoami{
+			Org:  &CommandCodeQuotaOrg{Login: ""},
+			User: &CommandCodeQuotaUser{UserName: "tester"},
+		},
+	}
+	commandCodeBuildQuotaView(quota)
+
+	if quota.Usage.UsageURL != "" || quota.Usage.UsageURLDisplay != "" {
+		t.Errorf("UsageURL = %q, UsageURLDisplay = %q, want both empty", quota.Usage.UsageURL, quota.Usage.UsageURLDisplay)
 	}
 }
 
@@ -130,6 +171,14 @@ func TestCommandCodeDaysLeft(t *testing.T) {
 	}
 	if got := commandCodeDaysLeft(now.Add(-time.Hour).Format(time.RFC3339), now); got == nil || *got != 0 {
 		t.Errorf("commandCodeDaysLeft(past) = %v, want 0", got)
+	}
+	// The CLI runs the value through `new Date(...)`, so offset-less and
+	// date-only forms must resolve too.
+	if got := commandCodeDaysLeft("2026-09-26T12:00:00", now); got == nil || *got != 2 {
+		t.Errorf("commandCodeDaysLeft(offset-less) = %v, want 2", got)
+	}
+	if got := commandCodeDaysLeft("2026-09-26", now); got == nil || *got != 2 {
+		t.Errorf("commandCodeDaysLeft(date-only) = %v, want 2", got)
 	}
 }
 
