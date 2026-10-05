@@ -179,10 +179,11 @@ type CommandCodeQuotaSummary struct {
 	PeriodBasis           string  `json:"periodBasis,omitempty"`
 }
 
-// commandCodePlanMonthlyCredits mirrors rr (getPlanTotalCredits) in the
-// official CLI: the monthly credit allowance included in each plan.
+// commandCodePlanMonthlyCredits mirrors the plan-credit table (getPlanTotalCredits)
+// in the official CLI: the monthly credit allowance included in each plan.
 var commandCodePlanMonthlyCredits = map[string]float64{
 	"individual-go":       10,
+	"individual-go-v1":    10,
 	"individual-goat":     70,
 	"individual-pro":      30,
 	"individual-pro-v1":   80,
@@ -192,9 +193,10 @@ var commandCodePlanMonthlyCredits = map[string]float64{
 	"teams-pro":           40,
 }
 
-// commandCodePlanDisplayNames mirrors or (getPlanDisplayName).
+// commandCodePlanDisplayNames mirrors the plan display-name table.
 var commandCodePlanDisplayNames = map[string]string{
 	"individual-go":       "Go",
+	"individual-go-v1":    "Go",
 	"individual-goat":     "GOAT",
 	"individual-pro":      "Pro",
 	"individual-pro-v1":   "Pro",
@@ -359,10 +361,10 @@ func commandCodeBuildQuotaView(quota *CommandCodeQuota) {
 	}
 
 	// The CLI compares consumption against the plan allowance while the
-	// subscription is active, and against spend plus remaining credits
-	// otherwise (projectUsageView totalPool).
+	// subscription status is exactly "active", and against spend plus remaining
+	// credits otherwise (projectUsageView totalPool).
 	planAllowance := 0.0
-	if plan != nil && plan.MonthlyCredits > 0 && strings.EqualFold(plan.Status, "active") {
+	if plan != nil && plan.MonthlyCredits > 0 && plan.Status == "active" {
 		planAllowance = plan.MonthlyCredits
 	}
 	if planAllowance > 0 {
@@ -371,12 +373,15 @@ func commandCodeBuildQuotaView(quota *CommandCodeQuota) {
 		usage.TotalPool = usage.TotalSpent + usage.TotalRemaining
 	}
 	if usage.TotalRemaining > 0 || usage.TotalSpent > 0 {
-		usage.UsagePercent = math.Round(commandCodeUsagePercent(usage.TotalPool-usage.TotalRemaining, usage.TotalPool)*100) / 100
+		// Unrounded, matching getUsagePercent in the CLI.
+		usage.UsagePercent = commandCodeUsagePercent(usage.TotalPool-usage.TotalRemaining, usage.TotalPool)
 	}
 
 	if account := commandCodeUsageAccount(quota.Whoami); account != "" {
 		usage.UsageURL = fmt.Sprintf("%s/%s/settings/usage", commandCodeStudioHost, account)
-		usage.UsageURLDisplay = account + "/settings/usage"
+		// The CLI renders the same URL with the scheme stripped
+		// (stripScheme(usageUrl) -> "commandcode.ai/<account>/settings/usage").
+		usage.UsageURLDisplay = strings.TrimPrefix(strings.TrimPrefix(usage.UsageURL, "https://"), "http://")
 	}
 	if subscription != nil {
 		usage.DaysLeft = commandCodeDaysLeft(subscription.CurrentPeriodEnd, time.Now())
@@ -395,13 +400,17 @@ func commandCodeUsagePercent(used, total float64) float64 {
 
 // commandCodeDaysLeft mirrors getDaysRemainingFromNow: whole days until the
 // period end, floored at zero; nil when the timestamp is absent or invalid.
+//
+// The CLI feeds the value through `new Date(...)`, which accepts more shapes
+// than RFC3339 alone, so the common offset-less and date-only forms are
+// accepted here as well.
 func commandCodeDaysLeft(periodEnd string, now time.Time) *int {
 	trimmed := strings.TrimSpace(periodEnd)
 	if trimmed == "" {
 		return nil
 	}
-	end, err := time.Parse(time.RFC3339, trimmed)
-	if err != nil {
+	end, errParse := commandCodeParseTime(trimmed)
+	if errParse != nil {
 		return nil
 	}
 	days := int(math.Ceil(end.Sub(now).Hours() / 24))
@@ -411,8 +420,33 @@ func commandCodeDaysLeft(periodEnd string, now time.Time) *int {
 	return &days
 }
 
-// commandCodeUsageAccount mirrors getStudioUsageUrl: prefer the org login, then
-// the user name.
+// commandCodeTimeLayouts are the timestamp shapes accepted on top of RFC3339
+// (date-only and offset-less ISO variants produced by Date#toISOString slices).
+var commandCodeTimeLayouts = []string{
+	"2006-01-02",
+	"2006-01-02T15:04:05",
+	"2006-01-02T15:04:05.999999999",
+	"2006-01-02 15:04:05",
+}
+
+// commandCodeParseTime parses a subscription period timestamp, preferring
+// RFC3339 and falling back to the offset-less layouts above. Offset-less values
+// are interpreted as UTC, matching Date's treatment of date-time strings without
+// a timezone designator in the ECMAScript specification.
+func commandCodeParseTime(value string) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339, value); err == nil {
+		return t, nil
+	}
+	for _, layout := range commandCodeTimeLayouts {
+		if t, err := time.ParseInLocation(layout, value, time.UTC); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("commandcode: unrecognized timestamp %q", value)
+}
+
+// commandCodeUsageAccount mirrors getStudioUsageUrl: the org login, and only
+// when that is absent the user name.
 func commandCodeUsageAccount(whoami *CommandCodeQuotaWhoami) string {
 	if whoami == nil {
 		return ""
@@ -421,6 +455,7 @@ func commandCodeUsageAccount(whoami *CommandCodeQuotaWhoami) string {
 		if login := strings.TrimSpace(whoami.Org.Login); login != "" {
 			return login
 		}
+		return ""
 	}
 	if whoami.User != nil {
 		return strings.TrimSpace(whoami.User.UserName)
