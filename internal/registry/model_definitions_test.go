@@ -333,3 +333,70 @@ func TestGetDevinModelsFallback(t *testing.T) {
 		t.Errorf("info.DisplayName = %q, want SWE-2", info.DisplayName)
 	}
 }
+
+// TestGetCommandCodeModelsCatalog pins the ids added by the
+// command-code@1.74.2 sync and the context windows the CLI catalog advertises.
+func TestGetCommandCodeModelsCatalog(t *testing.T) {
+	models := GetCommandCodeModels()
+	if len(models) == 0 {
+		t.Fatal("GetCommandCodeModels() returned empty list")
+	}
+
+	byID := make(map[string]*ModelInfo, len(models))
+	for _, m := range models {
+		if m == nil {
+			continue
+		}
+		if _, dup := byID[m.ID]; dup {
+			t.Errorf("duplicate commandcode model id %q", m.ID)
+		}
+		byID[m.ID] = m
+		if m.Type != "commandcode" || m.OwnedBy != "commandcode" {
+			t.Errorf("model %s Type=%q OwnedBy=%q, want commandcode", m.ID, m.Type, m.OwnedBy)
+		}
+	}
+
+	// Ids added in 1.74.2 (claude-sonnet-5-5, gpt-6.1-sol, V4.1 Flash Fast,
+	// Ling 3.1 Flash) must be present.
+	for _, id := range []string{
+		"claude-sonnet-5-5",
+		"gpt-6.1-sol",
+		"deepseek/deepseek-v4.1-flash-fast",
+		"inclusionai/ling-3.1-flash:free",
+	} {
+		if byID[id] == nil {
+			t.Errorf("expected %s in GetCommandCodeModels()", id)
+		}
+	}
+
+	// Models the CLI marks hidden must stay out of the catalog.
+	for _, id := range []string{
+		"stealth/space-bunny-alpha",
+		"stealth/pixel-canary",
+		"tencent/Hy3",
+		"minimax/minimax-m3-free",
+		"MiniMaxAI/MiniMax-M3-Free",
+	} {
+		if byID[id] != nil {
+			t.Errorf("hidden model %s should not be in GetCommandCodeModels()", id)
+		}
+	}
+
+	// Context windows advertised by the 1.74.2 CLI catalog.
+	contexts := map[string]int{
+		"claude-sonnet-5-5":                 1000000,
+		"gpt-6.1-sol":                       1050000,
+		"stepfun/Step-3.5-Flash":            262144,
+		"inclusionai/ling-3.1-flash:free":   262144,
+		"deepseek/deepseek-v4.1-flash-fast": 1000000,
+	}
+	for id, want := range contexts {
+		info := byID[id]
+		if info == nil {
+			continue
+		}
+		if info.ContextLength != want {
+			t.Errorf("%s ContextLength = %d, want %d", id, info.ContextLength, want)
+		}
+	}
+}
