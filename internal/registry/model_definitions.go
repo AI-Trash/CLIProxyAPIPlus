@@ -460,14 +460,16 @@ func upsertModelInfos(models []*ModelInfo, extras ...*ModelInfo) []*ModelInfo {
 }
 
 // GetCommandCodeModels returns the available model definitions for Command Code.
-// Synced from command-code@1.65.0 (npm) model catalog (Cr known-id Set / kr
-// reasoning-effort Map in dist/cli.mjs) and the generated knowledge reference
-// models.md.
+// Synced from command-code@1.74.2 (npm): the known-id Set / reasoning-effort Map
+// in dist/cli.mjs plus the generated knowledge reference
+// dist/bundled/command-code-knowledge/reference/models.md.
 //
 // IDs are the CLI canonical wire form used in /alpha/generate params.model:
 // bare Anthropic/OpenAI names (claude-*, gpt-*), org/name for gateway models.
-// Hidden free variants (tencent/Hy3, MiniMax-M3-Free, MiniMax-M2.7-Free and
-// meituan/LongCat-2.0:free, all marked hidden in the CLI catalog) are omitted.
+// Hidden free variants (MiniMaxAI/MiniMax-M3-Free, minimax/minimax-m3-free,
+// minimax/minimax-m2.7-free, meituan/LongCat-2.0:free, tencent/Hy3,
+// stealth/space-bunny-alpha and stealth/pixel-canary, all marked hidden in the
+// CLI catalog) are omitted.
 func GetCommandCodeModels() []*ModelInfo {
 	now := int64(1732752000)
 	ep := []string{"/chat/completions", "/responses"}
@@ -481,6 +483,7 @@ func GetCommandCodeModels() []*ModelInfo {
 	}
 	return []*ModelInfo{
 		// ── Premium models (Anthropic) — canonical bare ids ──
+		cc("claude-sonnet-5-5", "Claude Sonnet 5.5", "Anthropic Claude Sonnet 5.5 via Command Code", 1000000),
 		cc("claude-sonnet-5", "Claude Sonnet 5", "Anthropic Claude Sonnet 5 via Command Code", 1000000),
 		cc("claude-sonnet-4-6", "Claude Sonnet 4.6", "Anthropic Claude Sonnet 4.6 via Command Code", 1000000),
 		cc("claude-fable-5-1", "Claude Fable 5.1", "Anthropic Claude Fable 5.1 via Command Code", 1000000),
@@ -492,6 +495,7 @@ func GetCommandCodeModels() []*ModelInfo {
 		cc("claude-haiku-4-5-20251001", "Claude Haiku 4.5", "Anthropic Claude Haiku 4.5 via Command Code", 200000),
 		// ── Premium models (OpenAI) ──
 		cc("gpt-6-astra", "GPT-6 Astra", "OpenAI GPT-6 Astra via Command Code", 1050000),
+		cc("gpt-6.1-sol", "GPT-6.1 Sol", "OpenAI GPT-6.1 Sol via Command Code", 1050000),
 		cc("gpt-6-sol", "GPT-6 Sol", "OpenAI GPT-6 Sol via Command Code", 1050000),
 		cc("gpt-6-luna", "GPT-6 Luna", "OpenAI GPT-6 Luna via Command Code", 1050000),
 		cc("gpt-5.6-sol", "GPT-5.6 Sol", "OpenAI GPT-5.6 Sol via Command Code", 1050000),
@@ -507,6 +511,7 @@ func GetCommandCodeModels() []*ModelInfo {
 		cc("deepseek/deepseek-v4-flash-vision-exp", "DeepSeek V4 Flash Vision (exp)", "DeepSeek V4 Flash Vision (exp) via Command Code", 1000000),
 		cc("deepseek/deepseek-v4-flash-fast", "DeepSeek V4 Flash Fast", "DeepSeek V4 Flash Fast via Command Code", 1000000),
 		cc("deepseek/deepseek-v4.1-flash", "DeepSeek V4.1 Flash", "DeepSeek V4.1 Flash via Command Code", 1000000),
+		cc("deepseek/deepseek-v4.1-flash-fast", "DeepSeek V4.1 Flash Fast", "DeepSeek V4.1 Flash Fast via Command Code", 1000000),
 		cc("moonshotai/Kimi-K3", "Kimi K3", "Moonshot Kimi K3 via Command Code", 1000000),
 		cc("moonshotai/Kimi-K2.7-Code", "Kimi K2.7 Code", "Moonshot Kimi K2.7 Code via Command Code", 256000),
 		cc("moonshotai/Kimi-K2.7-Code-Highspeed", "Kimi K2.7 Code HighSpeed", "Moonshot Kimi K2.7 Code HighSpeed via Command Code", 262000),
@@ -540,11 +545,13 @@ func GetCommandCodeModels() []*ModelInfo {
 		cc("meituan/LongCat-2.0", "LongCat 2.0", "Meituan LongCat 2.0 via Command Code", 1048576),
 		cc("stepfun/Step-5-Preview", "Step 5 Preview", "StepFun Step 5 Preview via Command Code", 1000000),
 		cc("stepfun/Step-3.7-Flash", "Step 3.7 Flash", "StepFun Step 3.7 Flash via Command Code", 256000),
-		cc("stepfun/Step-3.5-Flash", "Step 3.5 Flash", "StepFun Step 3.5 Flash via Command Code", 1000000),
+		cc("stepfun/Step-3.5-Flash", "Step 3.5 Flash", "StepFun Step 3.5 Flash via Command Code", 262144),
 		cc("tencent/hy4-preview", "Tencent Hy4 Preview", "Tencent Hy4 Preview via Command Code", 1048576),
 		cc("tencent/hy3-paid", "Tencent Hy3", "Tencent Hy3 via Command Code", 262144),
-		// ── Stealth ──
-		cc("stealth/space-bunny-alpha", "Space Bunny Alpha", "Stealth model via Command Code", 1000000),
+		// ── Google ──
+		// The stealth preview models the CLI used to expose alongside these
+		// (space-bunny-alpha, pixel-canary) were retired in 1.73.1/1.74.2 and
+		// are no longer selectable.
 		cc("google/gemini-3.8-flash", "Gemini 3.8 Flash", "Google Gemini 3.8 Flash via Command Code", 1000000),
 		cc("google/gemini-3.7-flash", "Gemini 3.7 Flash", "Google Gemini 3.7 Flash via Command Code", 1048576),
 		cc("google/gemini-3.6-flash", "Gemini 3.6 Flash", "Google Gemini 3.6 Flash via Command Code", 1000000),
@@ -558,6 +565,7 @@ func GetCommandCodeModels() []*ModelInfo {
 		cc("poolside/laguna-s-2.1-free", "Laguna S 2.1", "Poolside Laguna S 2.1 (free) via Command Code", 256000),
 		cc("inclusionai/ling-3.0-flash-free", "Ling 3.0 Flash", "InclusionAI Ling 3.0 Flash (free) via Command Code", 256000),
 		cc("inclusionai/ling-3.0-flash-sante:free", "Ling 3.0 Flash Sante", "InclusionAI Ling 3.0 Flash Sante (free) via Command Code", 262144),
+		cc("inclusionai/ling-3.1-flash:free", "Ling 3.1 Flash", "InclusionAI Ling 3.1 Flash (free) via Command Code", 262144),
 		cc("meta/muse-spark-1.1", "Muse Spark 1.1", "Meta Muse Spark 1.1 via Command Code", 1048576),
 		cc("meta/muse-spark-1.2", "Muse Spark 1.2", "Meta Muse Spark 1.2 via Command Code", 1048576),
 		cc("meta/muse-spark-1.2-contributor", "Muse Spark 1.2 Contributor", "Meta Muse Spark 1.2 Contributor via Command Code", 1048576),

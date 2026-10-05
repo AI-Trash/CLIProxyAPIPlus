@@ -823,7 +823,7 @@ nonstream-keepalive-interval: 0
 #   3. Or manually create a JSON file in the auths/ directory:
 #      {"type": "commandcode", "api_key": "cc_...", "email": "user@example.com"}
 #
-# Model aliases (synced from command-code@1.65.0).
+# Model aliases (synced from command-code@1.74.2).
 # name  = upstream / registry id (canonical wire form sent to /alpha/generate)
 # alias = client-facing short name
 # Claude/GPT bare ids are already the wire form; aliases mainly shorten
@@ -831,6 +831,8 @@ nonstream-keepalive-interval: 0
 # oauth-model-alias:
 #   commandcode:
 #     ── Claude (premium, Pro+ plans) ──
+#     - name: "claude-sonnet-5-5"
+#       alias: "anthropic:claude-sonnet-5-5"
 #     - name: "claude-sonnet-5"
 #       alias: "anthropic:claude-sonnet-5"
 #     - name: "claude-sonnet-4-6"
@@ -854,6 +856,8 @@ nonstream-keepalive-interval: 0
 #     ── GPT (premium, Pro+ plans) ──
 #     - name: "gpt-6-astra"
 #       alias: "openai:gpt-6-astra"
+#     - name: "gpt-6.1-sol"
+#       alias: "openai:gpt-6.1-sol"
 #     - name: "gpt-6-sol"
 #       alias: "openai:gpt-6-sol"
 #     - name: "gpt-6-luna"
@@ -883,6 +887,8 @@ nonstream-keepalive-interval: 0
 #       alias: "deepseek-v4-flash-fast"
 #     - name: "deepseek/deepseek-v4.1-flash"
 #       alias: "deepseek-v4.1-flash"
+#     - name: "deepseek/deepseek-v4.1-flash-fast"
+#       alias: "deepseek-v4.1-flash-fast"
 #     ── Kimi (Go-plan) ──
 #     - name: "moonshotai/Kimi-K3"
 #       alias: "kimi-k3"
@@ -997,6 +1003,8 @@ nonstream-keepalive-interval: 0
 #       alias: "ling-3.0-flash"
 #     - name: "inclusionai/ling-3.0-flash-sante:free"
 #       alias: "ling-3.0-flash-sante"
+#     - name: "inclusionai/ling-3.1-flash:free"
+#       alias: "ling-3.1-flash"
 #     - name: "meta/muse-spark-1.1"
 #       alias: "muse-spark-1.1"
 #     - name: "meta/muse-spark-1.2"
