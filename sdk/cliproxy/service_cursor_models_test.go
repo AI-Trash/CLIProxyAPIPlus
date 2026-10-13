@@ -109,19 +109,10 @@ func TestRegisterModelsForAuth_CursorRefreshPublishesFilteredCatalogs(t *testing
 		t.Fatalf("routing catalog = %#v, want only the unaliased, nonexcluded upstream model", got)
 	}
 	registered := reg.GetModelsForClient(auth.ID)
-	if len(registered) != 2 {
-		t.Fatalf("registered models = %#v, want upstream variant and family alias", registered)
+	if len(registered) != 1 || registered[0].ID != "friendly" {
+		t.Fatalf("registered models = %#v, want only the collapsed family alias", registered)
 	}
-	var family *ModelInfo
-	for _, model := range registered {
-		switch model.ID {
-		case "gpt-5-low":
-		case "friendly":
-			family = model
-		default:
-			t.Fatalf("unexpected registered model %q", model.ID)
-		}
-	}
+	family := registered[0]
 	if family == nil || family.ContextLength != 128000 || family.MaxCompletionTokens != 16000 {
 		t.Fatalf("family alias did not preserve representative metadata: %#v", family)
 	}

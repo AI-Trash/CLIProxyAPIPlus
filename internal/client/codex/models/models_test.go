@@ -1567,3 +1567,170 @@ func TestCodexClientModelsResponse_DevinDisplayName(t *testing.T) {
 		}
 	}
 }
+
+func TestCursorFamilyCatalogAdvertisesReasoningAndFast(t *testing.T) {
+	modelRegistry := registry.GetGlobalRegistry()
+	clientID := "cursor-family-catalog-test"
+	modelRegistry.RegisterClient(clientID+"-codex", "codex", []*registry.ModelInfo{{
+		ID:      "gpt-5.5",
+		OwnedBy: "openai",
+		Type:    "codex",
+	}})
+	modelRegistry.RegisterClient(clientID, "cursor", []*registry.ModelInfo{
+		{
+			ID:               "cursor/claude-opus-5",
+			MetadataModelID:  "claude-opus-5",
+			OwnedBy:          "cursor",
+			Type:             "cursor",
+			DisplayName:      "Claude Opus 5",
+			ExplicitThinking: true,
+			Thinking:         &registry.ThinkingSupport{Levels: []string{"low", "high"}},
+			SupportsFast:     true,
+		},
+		{
+			ID:              "cursor/composer-2.5",
+			MetadataModelID: "composer-2.5",
+			OwnedBy:         "cursor",
+			Type:            "cursor",
+			DisplayName:     "Composer 2.5",
+			SupportsFast:    true,
+		},
+		{
+			ID:              "cursor/kimi-k2.7-code",
+			MetadataModelID: "kimi-k2.7-code",
+			OwnedBy:         "cursor",
+			Type:            "cursor",
+			DisplayName:     "Kimi",
+		},
+		{
+			ID:               "cursor/gpt-5.5",
+			MetadataModelID:  "gpt-5.5",
+			OwnedBy:          "cursor",
+			Type:             "cursor",
+			DisplayName:      "GPT 5.5",
+			ExplicitThinking: true,
+			Thinking:         &registry.ThinkingSupport{Levels: []string{"low", "medium", "high", "xhigh", "max"}},
+			SupportsFast:     true,
+		},
+	})
+	t.Cleanup(func() {
+		modelRegistry.UnregisterClient(clientID)
+		modelRegistry.UnregisterClient(clientID + "-codex")
+	})
+
+	resp := BuildResponseForClient([]map[string]any{
+		{"id": "gpt-5.5"},
+		{"id": "cursor/claude-opus-5", "display_name": "Claude Opus 5"},
+		{"id": "cursor/composer-2.5", "display_name": "Composer 2.5"},
+		{"id": "cursor/kimi-k2.7-code", "display_name": "Kimi"},
+		{"id": "cursor/gpt-5.5", "display_name": "GPT 5.5"},
+	}, modelRegistry.GetModelProviders, false, "0.153.4")
+	models, ok := resp["models"].([]map[string]any)
+	if !ok {
+		t.Fatalf("models = %#v", resp["models"])
+	}
+	bySlug := map[string]map[string]any{}
+	for _, model := range models {
+		bySlug[stringModelValue(model, "slug")] = model
+	}
+
+	codex := bySlug["gpt-5.5"]
+	if efforts := reasoningEfforts(t, codex); !containsAll(efforts, "low", "medium", "high", "xhigh") {
+		t.Fatalf("codex reasoning levels = %v", efforts)
+	}
+	if id, name, description := serviceTier(t, codex); id != "priority" || name != "Fast" || description != "1.5x speed, increased usage" {
+		t.Fatalf("codex service tier = %s %s %s", id, name, description)
+	}
+
+	opus := bySlug["cursor/claude-opus-5"]
+	if efforts := reasoningEfforts(t, opus); len(efforts) != 2 || efforts[0] != "low" || efforts[1] != "high" {
+		t.Fatalf("opus reasoning levels = %v", efforts)
+	}
+	if id, name, description := serviceTier(t, opus); id != "priority" || name != "Fast" || description != "Faster responses" {
+		t.Fatalf("opus service tier = %s %s %s", id, name, description)
+	}
+	if speeds := speedTiers(t, opus); len(speeds) != 1 || speeds[0] != "fast" {
+		t.Fatalf("opus speed tiers = %v", speeds)
+	}
+
+	composer := bySlug["cursor/composer-2.5"]
+	if efforts := reasoningEfforts(t, composer); len(efforts) != 0 {
+		t.Fatalf("composer reasoning levels = %v, want none", efforts)
+	}
+	if _, ok := composer["default_reasoning_level"]; ok {
+		t.Fatalf("composer default reasoning = %#v", composer["default_reasoning_level"])
+	}
+	if id, _, _ := serviceTier(t, composer); id != "priority" {
+		t.Fatalf("composer service tier = %s", id)
+	}
+
+	kimi := bySlug["cursor/kimi-k2.7-code"]
+	if efforts := reasoningEfforts(t, kimi); len(efforts) != 0 {
+		t.Fatalf("kimi reasoning levels = %v, want none", efforts)
+	}
+	if tiers, _ := kimi["service_tiers"].([]any); len(tiers) != 0 {
+		t.Fatalf("kimi service tiers = %#v", kimi["service_tiers"])
+	}
+	if speeds := speedTiers(t, kimi); len(speeds) != 0 {
+		t.Fatalf("kimi speed tiers = %v", speeds)
+	}
+
+	cursorGPT := bySlug["cursor/gpt-5.5"]
+	if efforts := reasoningEfforts(t, cursorGPT); len(efforts) != 5 || efforts[4] != "max" {
+		t.Fatalf("cursor gpt reasoning levels = %v", efforts)
+	}
+	if id, _, description := serviceTier(t, cursorGPT); id != "priority" || description != "Faster responses" {
+		t.Fatalf("cursor gpt service tier = %s %s", id, description)
+	}
+}
+
+func reasoningEfforts(t *testing.T, entry map[string]any) []string {
+	t.Helper()
+	raw, ok := entry["supported_reasoning_levels"].([]any)
+	if !ok {
+		t.Fatalf("supported_reasoning_levels = %#v", entry["supported_reasoning_levels"])
+	}
+	efforts := make([]string, 0, len(raw))
+	for _, item := range raw {
+		level, _ := item.(map[string]any)
+		efforts = append(efforts, stringModelValue(level, "effort"))
+	}
+	return efforts
+}
+
+func serviceTier(t *testing.T, entry map[string]any) (string, string, string) {
+	t.Helper()
+	raw, ok := entry["service_tiers"].([]any)
+	if !ok || len(raw) != 1 {
+		t.Fatalf("service_tiers = %#v", entry["service_tiers"])
+	}
+	tier, _ := raw[0].(map[string]any)
+	return stringModelValue(tier, "id"), stringModelValue(tier, "name"), stringModelValue(tier, "description")
+}
+
+func speedTiers(t *testing.T, entry map[string]any) []string {
+	t.Helper()
+	raw, ok := entry["additional_speed_tiers"].([]any)
+	if !ok {
+		t.Fatalf("additional_speed_tiers = %#v", entry["additional_speed_tiers"])
+	}
+	speeds := make([]string, 0, len(raw))
+	for _, item := range raw {
+		speed, _ := item.(string)
+		speeds = append(speeds, speed)
+	}
+	return speeds
+}
+
+func containsAll(values []string, wants ...string) bool {
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		seen[value] = struct{}{}
+	}
+	for _, want := range wants {
+		if _, ok := seen[want]; !ok {
+			return false
+		}
+	}
+	return true
+}

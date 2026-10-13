@@ -26,57 +26,131 @@ type cursorModelFamily struct {
 	Variants []cursorModelVariant
 }
 
+// AddCursorModelFamilies returns one catalog entry per model family.
+// Variant IDs that only encode effort, thinking, or speed are omitted.
+// Callers that still need those IDs keep the original slice for routing.
 func AddCursorModelFamilies(models []*registry.ModelInfo) []*registry.ModelInfo {
-	result := append([]*registry.ModelInfo(nil), models...)
-	for _, family := range cursorModelFamilies(models) {
-		if len(family.Variants) == 1 && family.Variants[0].ID == family.ID {
+	families := cursorModelFamilies(models)
+	hide := map[string]struct{}{}
+	for _, family := range families {
+		if cursorFamilyIsSingleton(family) {
 			continue
 		}
-		var representative *registry.ModelInfo
-		index := -1
-		for i, model := range models {
-			if model == nil {
-				continue
-			}
-			if model.ID == family.Variants[0].ID {
-				representative = model
-			}
-			if model.ID == family.ID {
-				index = i
-				representative = model
+		for _, variant := range family.Variants {
+			if variant.ID != family.ID {
+				hide[variant.ID] = struct{}{}
 			}
 		}
+	}
+
+	result := make([]*registry.ModelInfo, 0, len(models))
+	for _, model := range models {
+		if model != nil {
+			if _, hidden := hide[model.ID]; hidden {
+				continue
+			}
+		}
+		result = append(result, model)
+	}
+
+	for _, family := range families {
+		if cursorFamilyIsSingleton(family) {
+			continue
+		}
+		representative := cursorFamilyRepresentative(models, family)
 		if representative == nil {
 			continue
 		}
-		copy := *representative
-		copy.ID = family.ID
-		if index < 0 {
-			copy.DisplayName = family.ID
-		}
-		levels := []string{}
-		seen := map[string]bool{}
-		hasThinking := false
-		for _, variant := range family.Variants {
-			hasThinking = hasThinking || variant.Thinking
-			if variant.Effort != "" && !seen[variant.Effort] {
-				levels = append(levels, variant.Effort)
-				seen[variant.Effort] = true
+		enriched := enrichCursorFamily(representative, family)
+		replaced := false
+		for i, model := range result {
+			if model == nil || model.ID != family.ID {
+				continue
 			}
+			result[i] = enriched
+			replaced = true
 		}
-		if len(levels) > 0 {
-			copy.Thinking = &registry.ThinkingSupport{Levels: levels}
-			copy.SupportedParameters = append(append([]string(nil), copy.SupportedParameters...), "reasoning_effort")
-		} else if hasThinking && copy.Thinking == nil {
-			copy.Thinking = &registry.ThinkingSupport{}
-		}
-		if index >= 0 {
-			result[index] = &copy
-		} else {
-			result = append(result, &copy)
+		if !replaced {
+			result = append(result, enriched)
 		}
 	}
 	return result
+}
+
+func cursorFamilyIsSingleton(family cursorModelFamily) bool {
+	return len(family.Variants) == 1 && family.Variants[0].ID == family.ID
+}
+
+func cursorFamilyRepresentative(models []*registry.ModelInfo, family cursorModelFamily) *registry.ModelInfo {
+	var representative *registry.ModelInfo
+	for _, model := range models {
+		if model == nil {
+			continue
+		}
+		if model.ID == family.Variants[0].ID || model.ID == family.ID {
+			representative = model
+		}
+	}
+	return representative
+}
+
+func enrichCursorFamily(representative *registry.ModelInfo, family cursorModelFamily) *registry.ModelInfo {
+	copy := *representative
+	copy.ID = family.ID
+	if representative.ID != family.ID {
+		copy.DisplayName = family.ID
+	}
+	levels, hasThinking, hasFast := cursorEffortLevels(family.Variants)
+	if len(levels) > 0 {
+		copy.Thinking = &registry.ThinkingSupport{Levels: levels}
+		if !cursorParameterListed(copy.SupportedParameters, "reasoning_effort") {
+			copy.SupportedParameters = append(append([]string(nil), copy.SupportedParameters...), "reasoning_effort")
+		}
+		copy.ExplicitThinking = true
+	} else if hasThinking && copy.Thinking == nil {
+		copy.Thinking = &registry.ThinkingSupport{}
+		copy.ExplicitThinking = true
+	} else if copy.Thinking != nil {
+		copy.ExplicitThinking = true
+	}
+	copy.SupportsFast = hasFast
+	return &copy
+}
+
+func cursorEffortLevels(variants []cursorModelVariant) (levels []string, hasThinking, hasFast bool) {
+	seen := map[string]struct{}{}
+	for _, variant := range variants {
+		hasThinking = hasThinking || variant.Thinking
+		hasFast = hasFast || variant.Fast
+		if variant.Effort != "" {
+			seen[variant.Effort] = struct{}{}
+		}
+	}
+	for _, level := range []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"} {
+		if _, ok := seen[level]; !ok {
+			continue
+		}
+		levels = append(levels, level)
+		delete(seen, level)
+	}
+	if len(seen) == 0 {
+		return levels, hasThinking, hasFast
+	}
+	extra := make([]string, 0, len(seen))
+	for level := range seen {
+		extra = append(extra, level)
+	}
+	sort.Strings(extra)
+	return append(levels, extra...), hasThinking, hasFast
+}
+
+func cursorParameterListed(parameters []string, want string) bool {
+	for _, parameter := range parameters {
+		if parameter == want {
+			return true
+		}
+	}
+	return false
 }
 
 func cursorVariant(id string) (string, cursorModelVariant) {

@@ -41,6 +41,8 @@ type ModelInfo struct {
 	MetadataModelID string `json:"-"`
 	// ExplicitThinking indicates thinking/reasoning configuration was explicitly configured for this model.
 	ExplicitThinking bool `json:"-"`
+	// SupportsFast reports that the model can be requested at the priority/fast service tier.
+	SupportsFast bool `json:"-"`
 	// ExplicitInputModalities indicates input modalities were explicitly configured for this model.
 	ExplicitInputModalities bool `json:"-"`
 	// Object type for the model (typically "model")

@@ -79,7 +79,7 @@ func TestResolveCursorModel(t *testing.T) {
 		})
 	}
 	augmented := AddCursorModelFamilies(models)
-	if len(augmented) != len(models)+2 {
+	if len(augmented) != 3 {
 		t.Fatalf("unexpected family catalog length %d", len(augmented))
 	}
 	if models[0].Thinking != nil {
@@ -111,17 +111,22 @@ func TestAddCursorModelFamilies(t *testing.T) {
 		{ID: "claude-opus-5-thinking-high"},
 	}
 	got := AddCursorModelFamilies(models)
-	if len(got) != 6 {
-		t.Fatalf("length %d", len(got))
+	if len(got) != 2 || got[0].ID != "composer-2.5" || got[1].ID != "claude-opus-5" {
+		t.Fatalf("collapsed catalog = %v", modelIDs(got))
 	}
-	for i, original := range models {
-		if got[i].ID != original.ID {
-			t.Fatalf("lost original model %s", original.ID)
-		}
+	if !got[0].SupportsFast || got[0].Thinking != nil {
+		t.Fatalf("composer family = %+v", got[0])
 	}
-	family := got[len(got)-1]
-	if family.ID != "claude-opus-5" || family.Thinking == nil || len(family.Thinking.Levels) != 2 {
+	family := got[1]
+	if family.Thinking == nil || len(family.Thinking.Levels) != 2 || family.Thinking.Levels[0] != "low" || family.Thinking.Levels[1] != "high" || family.SupportsFast {
 		t.Fatalf("bad family: %+v", family)
+	}
+	for _, hidden := range []string{"composer-2.5-fast", "claude-opus-5-thinking-high", "claude-opus-5-low"} {
+		for _, model := range got {
+			if model.ID == hidden {
+				t.Fatalf("variant %s remained in the catalog", hidden)
+			}
+		}
 	}
 	if models[0].DisplayName != "Composer" || models[2].Thinking != nil {
 		t.Fatal("mutated inputs")
@@ -163,16 +168,14 @@ func TestAddCursorModelFamiliesThinkingOnly(t *testing.T) {
 		base := &registry.ModelInfo{ID: "claude-fable-5-1", DisplayName: "Fable", ContextLength: 200000, SupportedParameters: []string{"tools"}}
 		variant := &registry.ModelInfo{ID: "claude-fable-5-1-thinking"}
 		models := []*registry.ModelInfo{base, variant}
-		index := 0
 		if reverse {
 			models[0], models[1] = models[1], models[0]
-			index = 1
 		}
 		got := AddCursorModelFamilies(models)
-		if len(got) != len(models) {
-			t.Fatalf("reverse=%t: added duplicate base model", reverse)
+		if len(got) != 1 || got[0].ID != base.ID {
+			t.Fatalf("reverse=%t: catalog = %v", reverse, modelIDs(got))
 		}
-		family := got[index]
+		family := got[0]
 		if family.Thinking == nil || len(family.Thinking.Levels) != 0 {
 			t.Fatalf("reverse=%t: thinking-only support not advertised: %+v", reverse, family.Thinking)
 		}
@@ -189,14 +192,14 @@ func TestAddCursorModelFamiliesThinkingOnly(t *testing.T) {
 			{`{"thinking":{"type":"enabled"}}`, variant.ID},
 			{`{"thinking":{"type":"disabled"}}`, base.ID},
 		} {
-			resolved, err := ResolveCursorModel(family.ID, []byte(tc.body), "claude", got)
+			resolved, err := ResolveCursorModel(family.ID, []byte(tc.body), "claude", models)
 			if err != nil || resolved != tc.want {
 				t.Fatalf("%s: got %q, %v; want %q", tc.body, resolved, err, tc.want)
 			}
 		}
 		base.Thinking = &registry.ThinkingSupport{Min: 1024, Max: 32768, ZeroAllowed: true}
 		got = AddCursorModelFamilies(models)
-		if got[index].Thinking != base.Thinking {
+		if len(got) != 1 || got[0].Thinking != base.Thinking {
 			t.Fatal("replaced existing thinking metadata")
 		}
 	}
@@ -238,4 +241,16 @@ func TestCursorRoutingModels_NilAndEmptySliceSemantics(t *testing.T) {
 	if got := CursorRoutingModels(authID, fallback); len(got) != 1 || got[0].ID != "fallback-model" {
 		t.Fatalf("expected fallback after Delete, got: %#v", got)
 	}
+}
+
+func modelIDs(models []*registry.ModelInfo) []string {
+	ids := make([]string, 0, len(models))
+	for _, model := range models {
+		if model == nil {
+			ids = append(ids, "")
+			continue
+		}
+		ids = append(ids, model.ID)
+	}
+	return ids
 }

@@ -1,9 +1,10 @@
 # Cursor model families
 
 Cursor can advertise separate model IDs for reasoning effort, thinking, and
-speed, such as `claude-opus-5-thinking-high-fast`. The proxy also registers
-family IDs derived from that account's advertised catalog, so clients can
-select one model and send its options separately.
+speed, such as `claude-opus-5-thinking-high-fast`. The model list returns one
+family ID for each of those groups, with the reasoning levels and fast speed
+that account actually offers. Clients select the family and send its options
+separately.
 
 For example, when the corresponding variant is available:
 
@@ -41,12 +42,12 @@ Canonical model suffixes such as `claude-opus-5(high)` also select family
 options and take precedence over body effort and thinking settings.
 Thinking-only families advertise thinking support even without effort levels.
 
-Explicit variant IDs retain their existing behavior. Original models remain
-in the catalog alongside family IDs, so clients should curate their picker
-if they want only families. Model exclusions are applied before deriving
-families and remain effective during variant resolution. Available options
-can differ between accounts; advertised family effort levels do not imply
-that every effort/thinking/speed combination exists.
+Explicit variant IDs still resolve when a client sends them, but they are
+not listed separately. A family advertises its reasoning levels, and a fast
+service tier when any advertised variant is fast. Model exclusions are applied
+before deriving families and remain effective during variant resolution.
+Available options can differ between accounts; advertised family effort levels
+do not imply that every effort/thinking/speed combination exists.
 
 If a selected account lacks a requested combination, the proxy tries another
 eligible account within the configured credential-attempt limit. These misses

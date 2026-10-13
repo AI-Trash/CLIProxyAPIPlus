@@ -99,6 +99,7 @@ func buildCodexClientModels(models []map[string]any, providersForModel Providers
 				applyCodexClientThinkingMetadata(entry, thinkingSupport, clientVersion)
 			}
 			applyCodexClientProviderCapabilities(entry, id, true, providersForModel)
+			applyCursorClientCatalog(entry, id, providersForModel, clientVersion)
 			applyCPAWebSearchCapability(entry, id, webSearchCapabilityForModel, clientVersion)
 			sanitizeCodexClientReasoningMetadata(entry, clientVersion)
 			applyCodexClientVisibilityOverride(entry, id)
@@ -114,6 +115,7 @@ func buildCodexClientModels(models []map[string]any, providersForModel Providers
 		applyCodexClientModelMetadata(entry, id, model, optimizeMultiAgentV2, clientVersion)
 		applyCodexClientMaxTokens(entry, model)
 		applyCodexClientProviderCapabilities(entry, id, false, providersForModel)
+		applyCursorClientCatalog(entry, id, providersForModel, clientVersion)
 		applyCPAWebSearchCapability(entry, id, webSearchCapabilityForModel, clientVersion)
 		sanitizeCodexClientReasoningMetadata(entry, clientVersion)
 		applyCodexClientVisibilityOverride(entry, id)
@@ -343,6 +345,76 @@ func applyCodexClientBaseInstructions(entry map[string]any, model map[string]any
 	if baseInstructions := stringModelValue(model, "base_instructions"); baseInstructions != "" {
 		entry["base_instructions"] = baseInstructions
 	}
+}
+
+// applyCursorClientCatalog replaces inherited Codex template reasoning and speed
+// with the levels advertised by the selected Cursor account.
+func applyCursorClientCatalog(entry map[string]any, id string, providersForModel ProvidersForModelFunc, clientVersion string) {
+	info := cursorCatalogModelInfo(id, providersForModel)
+	if info == nil {
+		return
+	}
+	if info.Thinking != nil {
+		applyCodexClientThinkingMetadata(entry, info.Thinking, clientVersion)
+	} else {
+		entry["supported_reasoning_levels"] = []any{}
+		delete(entry, "default_reasoning_level")
+	}
+	if info.SupportsFast {
+		entry["service_tiers"] = []any{map[string]any{
+			"id":          "priority",
+			"name":        "Fast",
+			"description": "Faster responses",
+		}}
+		entry["additional_speed_tiers"] = []any{"fast"}
+		return
+	}
+	entry["service_tiers"] = []any{}
+	entry["additional_speed_tiers"] = []any{}
+}
+
+func cursorCatalogModelInfo(id string, providersForModel ProvidersForModelFunc) *registry.ModelInfo {
+	if !cursorProviderServes(id, providersForModel) {
+		return nil
+	}
+	for _, candidate := range cursorCatalogModelIDs(id) {
+		info := registry.LookupModelInfo(candidate, "cursor")
+		if info == nil {
+			continue
+		}
+		if strings.EqualFold(info.Type, "cursor") || strings.EqualFold(info.OwnedBy, "cursor") {
+			return info
+		}
+	}
+	return nil
+}
+
+func cursorCatalogModelIDs(id string) []string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil
+	}
+	ids := []string{id}
+	if idx := strings.Index(id, "/"); idx != -1 {
+		if base := strings.TrimSpace(id[idx+1:]); base != "" && base != id {
+			ids = append(ids, base)
+		}
+	}
+	return ids
+}
+
+func cursorProviderServes(id string, providersForModel ProvidersForModelFunc) bool {
+	if providersForModel == nil {
+		return false
+	}
+	for _, candidate := range cursorCatalogModelIDs(id) {
+		for _, provider := range providersForModel(candidate) {
+			if strings.EqualFold(strings.TrimSpace(provider), "cursor") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func applyCodexClientModelCapabilities(entry map[string]any, id, metadataID string, info *registry.ModelInfo, providersForModel ProvidersForModelFunc, clientVersion string) {
