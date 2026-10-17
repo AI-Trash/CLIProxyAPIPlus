@@ -335,7 +335,7 @@ func TestGetDevinModelsFallback(t *testing.T) {
 }
 
 // TestGetCommandCodeModelsCatalog pins the ids added by the
-// command-code@1.74.2 sync and the context windows the CLI catalog advertises.
+// command-code@1.84.0 sync and the context windows the CLI catalog advertises.
 func TestGetCommandCodeModelsCatalog(t *testing.T) {
 	models := GetCommandCodeModels()
 	if len(models) == 0 {
@@ -356,13 +356,22 @@ func TestGetCommandCodeModelsCatalog(t *testing.T) {
 		}
 	}
 
-	// Ids added in 1.74.2 (claude-sonnet-5-5, gpt-6.1-sol, V4.1 Flash Fast,
-	// Ling 3.1 Flash) must be present.
+	// Ids added in 1.74.2 (claude-sonnet-5-5, gpt-6.1-sol, V4.1 Flash Fast)
+	// must stay in the catalog, and the ids 1.84.0 added must be listed.
 	for _, id := range []string{
 		"claude-sonnet-5-5",
 		"gpt-6.1-sol",
 		"deepseek/deepseek-v4.1-flash-fast",
-		"inclusionai/ling-3.1-flash:free",
+		"claude-haiku-5-5",
+		"Qwen/Qwen3.8-Max-Prime",
+		"google/gemini-4-argon",
+		"nvidia/nemotron-3.5-super-vl",
+		"mistral/mistral-large-4",
+		"meta/muse-spark-open",
+		"meta/muse-wonder-1.0",
+		"inclusionai/ling-3.1-flash",
+		"stealth/glyph-cluster:free",
+		"stealth/cat-jam:free",
 	} {
 		if byID[id] == nil {
 			t.Errorf("expected %s in GetCommandCodeModels()", id)
@@ -376,19 +385,27 @@ func TestGetCommandCodeModelsCatalog(t *testing.T) {
 		"tencent/Hy3",
 		"minimax/minimax-m3-free",
 		"MiniMaxAI/MiniMax-M3-Free",
+		"meituan/LongCat-2.0:free",
+		"inclusionai/ling-3.1-flash:free",
+		// Dropped from the 1.84.0 catalog entirely.
+		"inclusionai/ling-3.0-flash-free",
+		"inclusionai/ling-3.0-flash-sante:free",
 	} {
 		if byID[id] != nil {
 			t.Errorf("hidden model %s should not be in GetCommandCodeModels()", id)
 		}
 	}
 
-	// Context windows advertised by the 1.74.2 CLI catalog.
+	// Context windows advertised by the 1.84.0 CLI catalog.
 	contexts := map[string]int{
 		"claude-sonnet-5-5":                 1000000,
 		"gpt-6.1-sol":                       1050000,
 		"stepfun/Step-3.5-Flash":            262144,
-		"inclusionai/ling-3.1-flash:free":   262144,
+		"inclusionai/ling-3.1-flash":        262144,
 		"deepseek/deepseek-v4.1-flash-fast": 1000000,
+		"mistral/mistral-large-4":           524288,
+		"nvidia/nemotron-3.5-super-vl":      262144,
+		"stealth/cat-jam:free":              1048576,
 	}
 	for id, want := range contexts {
 		info := byID[id]

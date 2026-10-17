@@ -460,16 +460,17 @@ func upsertModelInfos(models []*ModelInfo, extras ...*ModelInfo) []*ModelInfo {
 }
 
 // GetCommandCodeModels returns the available model definitions for Command Code.
-// Synced from command-code@1.74.2 (npm): the known-id Set / reasoning-effort Map
-// in dist/cli.mjs plus the generated knowledge reference
+// Synced from command-code@1.84.0 (npm): the embedded model catalog
+// (catalogVersion d6177bab..., the known-id Set / reasoning-effort Map
+// derived from it) plus the generated knowledge reference
 // dist/bundled/command-code-knowledge/reference/models.md.
 //
 // IDs are the CLI canonical wire form used in /alpha/generate params.model:
 // bare Anthropic/OpenAI names (claude-*, gpt-*), org/name for gateway models.
-// Hidden free variants (MiniMaxAI/MiniMax-M3-Free, minimax/minimax-m3-free,
+// Hidden catalog entries (MiniMaxAI/MiniMax-M3-Free, minimax/minimax-m3-free,
 // minimax/minimax-m2.7-free, meituan/LongCat-2.0:free, tencent/Hy3,
-// stealth/space-bunny-alpha and stealth/pixel-canary, all marked hidden in the
-// CLI catalog) are omitted.
+// inclusionai/ling-3.1-flash:free, and the retired stealth preview models
+// stealth/space-bunny-alpha and stealth/pixel-canary) are omitted.
 func GetCommandCodeModels() []*ModelInfo {
 	now := int64(1732752000)
 	ep := []string{"/chat/completions", "/responses"}
@@ -492,6 +493,7 @@ func GetCommandCodeModels() []*ModelInfo {
 		cc("claude-opus-5", "Claude Opus 5", "Anthropic Claude Opus 5 via Command Code", 1000000),
 		cc("claude-opus-4-8", "Claude Opus 4.8", "Anthropic Claude Opus 4.8 via Command Code", 1000000),
 		cc("claude-opus-4-7", "Claude Opus 4.7", "Anthropic Claude Opus 4.7 via Command Code", 1000000),
+		cc("claude-haiku-5-5", "Claude Haiku 5.5", "Anthropic Claude Haiku 5.5 via Command Code", 1000000),
 		cc("claude-haiku-4-5-20251001", "Claude Haiku 4.5", "Anthropic Claude Haiku 4.5 via Command Code", 200000),
 		// ── Premium models (OpenAI) ──
 		cc("gpt-6-astra", "GPT-6 Astra", "OpenAI GPT-6 Astra via Command Code", 1050000),
@@ -535,6 +537,7 @@ func GetCommandCodeModels() []*ModelInfo {
 		cc("Qwen/Qwen3.6-Max-Preview", "Qwen 3.6 Max Preview", "Qwen 3.6 Max Preview via Command Code", 200000),
 		cc("Qwen/Qwen3.6-Plus", "Qwen 3.6 Plus", "Qwen 3.6 Plus via Command Code", 200000),
 		cc("Qwen/Qwen3.8-Omni-Flash", "Qwen 3.8 Omni Flash", "Qwen 3.8 Omni Flash via Command Code", 1000000),
+		cc("Qwen/Qwen3.8-Max-Prime", "Qwen 3.8 Max Prime", "Qwen 3.8 Max Prime via Command Code", 1000000),
 		cc("Qwen/Qwen3.8-Max-0902", "Qwen 3.8 Max 0902", "Qwen 3.8 Max 0902 via Command Code", 1000000),
 		cc("Qwen/Qwen3.8-Max", "Qwen 3.8 Max", "Qwen 3.8 Max via Command Code", 1000000),
 		cc("Qwen/Qwen3.8-27B", "Qwen 3.8 27B", "Qwen 3.8 27B via Command Code", 262144),
@@ -551,7 +554,9 @@ func GetCommandCodeModels() []*ModelInfo {
 		// ── Google ──
 		// The stealth preview models the CLI used to expose alongside these
 		// (space-bunny-alpha, pixel-canary) were retired in 1.73.1/1.74.2 and
-		// are no longer selectable.
+		// are no longer selectable. The glyph-cluster / cat-jam stealth models
+		// that replaced them live below with the other gateway ids.
+		cc("google/gemini-4-argon", "Gemini 4 Argon", "Google Gemini 4 Argon via Command Code", 1000000),
 		cc("google/gemini-3.8-flash", "Gemini 3.8 Flash", "Google Gemini 3.8 Flash via Command Code", 1000000),
 		cc("google/gemini-3.7-flash", "Gemini 3.7 Flash", "Google Gemini 3.7 Flash via Command Code", 1048576),
 		cc("google/gemini-3.6-flash", "Gemini 3.6 Flash", "Google Gemini 3.6 Flash via Command Code", 1000000),
@@ -560,17 +565,25 @@ func GetCommandCodeModels() []*ModelInfo {
 		cc("google/gemini-3.1-flash-lite", "Gemini 3.1 Flash Lite", "Google Gemini 3.1 Flash Lite via Command Code", 1000000),
 		cc("sakana/fugu-ultra", "Fugu Ultra", "Sakana Fugu Ultra via Command Code", 1000000),
 		cc("nvidia/nemotron-3-ultra-550b-a55b", "Nemotron 3 Ultra", "NVIDIA Nemotron 3 Ultra via Command Code", 1000000),
+		cc("nvidia/nemotron-3.5-super-vl", "Nemotron 3.5 Super VL", "NVIDIA Nemotron 3.5 Super VL via Command Code", 262144),
 		cc("thinkingmachines/inkling", "Inkling", "Thinking Machines Inkling via Command Code", 256000),
 		cc("thinkingmachines/inkling-small", "Inkling Small", "Thinking Machines Inkling Small via Command Code", 1000000),
+		cc("mistral/mistral-large-4", "Mistral Large 4", "Mistral Large 4 via Command Code", 524288),
 		cc("poolside/laguna-s-2.1-free", "Laguna S 2.1", "Poolside Laguna S 2.1 (free) via Command Code", 256000),
-		cc("inclusionai/ling-3.0-flash-free", "Ling 3.0 Flash", "InclusionAI Ling 3.0 Flash (free) via Command Code", 256000),
-		cc("inclusionai/ling-3.0-flash-sante:free", "Ling 3.0 Flash Sante", "InclusionAI Ling 3.0 Flash Sante (free) via Command Code", 262144),
-		cc("inclusionai/ling-3.1-flash:free", "Ling 3.1 Flash", "InclusionAI Ling 3.1 Flash (free) via Command Code", 262144),
+		// Ling 3.0 and the free Ling 3.1 variant left the catalog; Ling 3.1
+		// Flash is now a paid Go-plan model (the ":free" id is hidden).
+		cc("inclusionai/ling-3.1-flash", "Ling 3.1 Flash", "InclusionAI Ling 3.1 Flash via Command Code", 262144),
+		// Stealth models current in 1.84.0 (space-bunny-alpha / pixel-canary
+		// were retired).
+		cc("stealth/glyph-cluster:free", "Glyph Cluster", "Stealth Glyph Cluster (free) via Command Code", 256000),
+		cc("stealth/cat-jam:free", "Cat Jam", "Stealth Cat Jam (free) via Command Code", 1048576),
 		cc("meta/muse-spark-1.1", "Muse Spark 1.1", "Meta Muse Spark 1.1 via Command Code", 1048576),
 		cc("meta/muse-spark-1.2", "Muse Spark 1.2", "Meta Muse Spark 1.2 via Command Code", 1048576),
 		cc("meta/muse-spark-1.2-contributor", "Muse Spark 1.2 Contributor", "Meta Muse Spark 1.2 Contributor via Command Code", 1048576),
 		cc("meta/muse-spark-1.3", "Muse Spark 1.3", "Meta Muse Spark 1.3 via Command Code", 1048576),
 		cc("meta/muse-spark-1.3-contributor", "Muse Spark 1.3 Contributor", "Meta Muse Spark 1.3 Contributor via Command Code", 1048576),
+		cc("meta/muse-spark-open", "Muse Spark Open", "Meta Muse Spark Open via Command Code", 1048576),
+		cc("meta/muse-wonder-1.0", "Muse Wonder", "Meta Muse Wonder via Command Code", 1048576),
 		cc("xai/grok-4.5", "Grok 4.5", "xAI Grok 4.5 via Command Code", 500000),
 		cc("xai/grok-4.6", "Grok 4.6", "xAI Grok 4.6 via Command Code", 500000),
 		cc("xai/grok-4.7", "Grok 4.7", "xAI Grok 4.7 via Command Code", 500000),

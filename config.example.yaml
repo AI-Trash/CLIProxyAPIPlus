@@ -823,7 +823,7 @@ nonstream-keepalive-interval: 0
 #   3. Or manually create a JSON file in the auths/ directory:
 #      {"type": "commandcode", "api_key": "cc_...", "email": "user@example.com"}
 #
-# Model aliases (synced from command-code@1.74.2).
+# Model aliases (synced from command-code@1.84.0).
 # name  = upstream / registry id (canonical wire form sent to /alpha/generate)
 # alias = client-facing short name
 # Claude/GPT bare ids are already the wire form; aliases mainly shorten
@@ -849,6 +849,8 @@ nonstream-keepalive-interval: 0
 #       alias: "anthropic:claude-opus-4-8"
 #     - name: "claude-opus-4-7"
 #       alias: "anthropic:claude-opus-4-7"
+#     - name: "claude-haiku-5-5"
+#       alias: "anthropic:claude-haiku-5-5"
 #     - name: "claude-haiku-4-5-20251001"
 #       alias: "claude-haiku-4-5"
 #     - name: "claude-haiku-4-5-20251001"
@@ -936,6 +938,8 @@ nonstream-keepalive-interval: 0
 #     ── Qwen (Go-plan) ──
 #     - name: "Qwen/Qwen3.8-Omni-Flash"
 #       alias: "qwen-3.8-omni-flash"
+#     - name: "Qwen/Qwen3.8-Max-Prime"
+#       alias: "qwen-3.8-max-prime"
 #     - name: "Qwen/Qwen3.8-Max-0902"
 #       alias: "qwen-3.8-max-0902"
 #     - name: "Qwen/Qwen3.8-Max"
@@ -971,9 +975,13 @@ nonstream-keepalive-interval: 0
 #     - name: "tencent/hy3-paid"
 #       alias: "hy3"
 #     ── Stealth ──
-#     - name: "stealth/space-bunny-alpha"
-#       alias: "space-bunny-alpha"
+#     - name: "stealth/glyph-cluster:free"
+#       alias: "glyph-cluster"
+#     - name: "stealth/cat-jam:free"
+#       alias: "cat-jam"
 #     ── Gemini (Pro+ plans) ──
+#     - name: "google/gemini-4-argon"
+#       alias: "gemini-4-argon"
 #     - name: "google/gemini-3.8-flash"
 #       alias: "gemini-3.8-flash"
 #     - name: "google/gemini-3.7-flash"
@@ -991,6 +999,10 @@ nonstream-keepalive-interval: 0
 #       alias: "longcat-2.0"
 #     - name: "nvidia/nemotron-3-ultra-550b-a55b"
 #       alias: "nemotron-3-ultra"
+#     - name: "nvidia/nemotron-3.5-super-vl"
+#       alias: "nemotron-3.5-super-vl"
+#     - name: "mistral/mistral-large-4"
+#       alias: "mistral-large-4"
 #     - name: "sakana/fugu-ultra"
 #       alias: "fugu-ultra"
 #     - name: "thinkingmachines/inkling"
@@ -999,11 +1011,7 @@ nonstream-keepalive-interval: 0
 #       alias: "inkling-small"
 #     - name: "poolside/laguna-s-2.1-free"
 #       alias: "laguna-s-2.1"
-#     - name: "inclusionai/ling-3.0-flash-free"
-#       alias: "ling-3.0-flash"
-#     - name: "inclusionai/ling-3.0-flash-sante:free"
-#       alias: "ling-3.0-flash-sante"
-#     - name: "inclusionai/ling-3.1-flash:free"
+#     - name: "inclusionai/ling-3.1-flash"
 #       alias: "ling-3.1-flash"
 #     - name: "meta/muse-spark-1.1"
 #       alias: "muse-spark-1.1"
@@ -1015,6 +1023,10 @@ nonstream-keepalive-interval: 0
 #       alias: "muse-spark-1.3"
 #     - name: "meta/muse-spark-1.3-contributor"
 #       alias: "muse-spark-1.3-contributor"
+#     - name: "meta/muse-spark-open"
+#       alias: "muse-spark-open"
+#     - name: "meta/muse-wonder-1.0"
+#       alias: "muse-wonder"
 #     - name: "xai/grok-4.5"
 #       alias: "grok-4.5"
 #     - name: "xai/grok-4.6"
