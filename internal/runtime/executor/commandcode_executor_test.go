@@ -81,7 +81,7 @@ func TestCommandCodeExecutor_ExecuteStream_CodexResponseFormat(t *testing.T) {
 }
 
 func TestCommandCodeExecutor_ExecuteStream_OpenAIFormatReasoning(t *testing.T) {
-	// command-code@1.74.2 stream events: reasoning-start/delta/end + text-delta + finish
+	// command-code@1.84.0 stream events: reasoning-start/delta/end + text-delta + finish
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Write([]byte(`{"type":"reasoning-start"}` + "\n"))
@@ -395,7 +395,7 @@ func TestCommandCodeExecutor_Execute_NonStreamResponsesFormat(t *testing.T) {
 }
 
 func TestCommandCodeExecutor_ExecuteStream_RawFinishReasonAndCacheWrite(t *testing.T) {
-	// command-code@1.74.2: finish event may carry rawFinishReason instead of
+	// command-code@1.84.0: finish event may carry rawFinishReason instead of
 	// finishReason, and inputTokenDetails.cacheWriteTokens.
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -501,7 +501,7 @@ func TestCommandCodeExecutor_buildRequestBody(t *testing.T) {
 			name:      "openai tools passed through",
 			payload:   `{"model":"test","messages":[{"role":"user","content":"inspect"}],"stream":true,"tools":[{"type":"function","function":{"name":"list_files","description":"List files","parameters":{"type":"object","properties":{"path":{"type":"string"}}}}}],"tool_choice":"auto","parallel_tool_calls":true}`,
 			srcFormat: "openai",
-			// command-code@1.74.2 toWireTools: {name, description, input_schema} only (no type:function)
+			// command-code@1.84.0 toWireTools: {name, description, input_schema} only (no type:function)
 			contains: []string{
 				`"name":"list_files"`,
 				`"description":"List files"`,
@@ -660,14 +660,27 @@ func TestCanonicalizeCommandCodeModel(t *testing.T) {
 		{"claude-sonnet-4-6-20260215", "claude-sonnet-4-6"},
 		{"claude-sonnet-4-6@20260215", "claude-sonnet-4-6"},
 		{"claude-fable-5-1", "claude-fable-5-1"},
-		// 1.74.2 catalog additions. The trailing "-5" of the 5.5 ids must not be
+		// 1.84.0 catalog additions. The trailing "-5" of the 5.5 ids must not be
 		// mistaken for an 8-digit date suffix.
 		{"claude-sonnet-5-5", "claude-sonnet-5-5"},
 		{"claude-opus-5-5", "claude-opus-5-5"},
+		{"claude-haiku-5-5", "claude-haiku-5-5"},
 		{"anthropic:claude-sonnet-5-5", "claude-sonnet-5-5"},
 		{"gpt-6.1-sol", "gpt-6.1-sol"},
 		{"deepseek/deepseek-v4.1-flash-fast", "deepseek/deepseek-v4.1-flash-fast"},
+		{"inclusionai/ling-3.1-flash", "inclusionai/ling-3.1-flash"},
+		{"Qwen/Qwen3.8-Max-Prime", "Qwen/Qwen3.8-Max-Prime"},
+		{"google/gemini-4-argon", "google/gemini-4-argon"},
+		{"nvidia/nemotron-3.5-super-vl", "nvidia/nemotron-3.5-super-vl"},
+		{"mistral/mistral-large-4", "mistral/mistral-large-4"},
+		{"meta/muse-spark-open", "meta/muse-spark-open"},
+		{"meta/muse-wonder-1.0", "meta/muse-wonder-1.0"},
+		{"stealth/glyph-cluster:free", "stealth/glyph-cluster:free"},
+		{"stealth/cat-jam:free", "stealth/cat-jam:free"},
+		// Hidden catalog ids are not advertised, so they pass through unchanged
+		// (only the legacy alias map still rewrites tencent/HY3).
 		{"inclusionai/ling-3.1-flash:free", "inclusionai/ling-3.1-flash:free"},
+		{"tencent/HY3", "tencent/Hy3"},
 		// Catalog casing is restored for ids the client sent lower-cased.
 		{"Minimaxai/minimax-m3", "MiniMaxAI/MiniMax-M3"},
 		{"google/gemini-3.8-flash", "google/gemini-3.8-flash"},
@@ -727,7 +740,7 @@ func TestCommandCodeExecutor_injectHeaders_CLIpfingerprint(t *testing.T) {
 	if got := getLower("x-co-flag"); got != "" {
 		t.Errorf("x-co-flag = %q, want empty (removed from CLI in 1.44.0)", got)
 	}
-	// Optional headers from command-code@1.74.2: only sent when configured.
+	// Optional headers from command-code@1.84.0: only sent when configured.
 	if got := getLower("x-oss-primary-provider"); got != "" {
 		t.Errorf("x-oss-primary-provider = %q, want empty by default", got)
 	}
@@ -898,7 +911,7 @@ func TestCommandCodeExecutor_ExecuteStream_ToolResultAndStructuredError(t *testi
 }
 
 func TestCommandCodeExecutor_ExecuteStream_ProviderMetadataIgnored(t *testing.T) {
-	// command-code@1.74.2 consumeStream handles a "provider-metadata" event
+	// command-code@1.84.0 consumeStream handles a "provider-metadata" event
 	// (providerMetadata.anthropic usage → cacheWriteTokens1h) as informational
 	// only. The proxy must skip it without erroring and still complete.
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -948,5 +961,148 @@ func TestCommandCodeExecutor_ExecuteStream_ProviderMetadataIgnored(t *testing.T)
 	}
 	if !strings.Contains(joined, `"finish_reason":"stop"`) {
 		t.Errorf("stream did not complete after provider-metadata: %s", joined)
+	}
+}
+
+// TestCommandCodeExecutor_ExecuteStream_CacheWriteTokensEvent covers the
+// "cache-write-tokens" stream event: consumeStream captures it and merges it
+// into usage only when the finish event carried no cacheWriteTokens. The proxy
+// previously dropped the event entirely.
+func TestCommandCodeExecutor_ExecuteStream_CacheWriteTokensEvent(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte(`{"type":"text-delta","text":"hi"}` + "\n"))
+		w.Write([]byte(`{"type":"cache-write-tokens","cacheWriteTokens":11}` + "\n"))
+		w.Write([]byte(`{"type":"finish","finishReason":"end_turn","totalUsage":{"inputTokens":9,"outputTokens":2}}` + "\n"))
+	}))
+	defer upstream.Close()
+
+	exec := NewCommandCodeExecutor(&config.Config{})
+	auth := &cliproxyauth.Auth{
+		ID:         "test-auth",
+		Provider:   "commandcode",
+		Metadata:   map[string]any{"api_key": "test-key", "base_url": upstream.URL},
+		Attributes: map[string]string{"base_url": upstream.URL},
+	}
+
+	req := cliproxyexecutor.Request{
+		Model:   "deepseek/deepseek-v4-pro",
+		Payload: []byte(`{"model":"deepseek-v4-pro","messages":[{"role":"user","content":"hi"}],"stream":true}`),
+	}
+	opts := cliproxyexecutor.Options{
+		Stream:          true,
+		SourceFormat:    sdktranslator.FromString("openai"),
+		OriginalRequest: req.Payload,
+	}
+
+	result, err := exec.ExecuteStream(context.Background(), auth, req, opts)
+	if err != nil {
+		t.Fatalf("ExecuteStream failed: %v", err)
+	}
+
+	var chunks []string
+	for ch := range result.Chunks {
+		if ch.Err != nil {
+			t.Fatalf("unexpected chunk error: %v", ch.Err)
+		}
+		if ch.Payload != nil {
+			chunks = append(chunks, string(ch.Payload))
+		}
+	}
+	joined := strings.Join(chunks, "\n")
+	if !strings.Contains(joined, `"finish_reason":"stop"`) {
+		t.Errorf("stream did not complete after cache-write-tokens: %s", joined)
+	}
+}
+
+func TestCommandCodeCacheWriteTokens(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+		want int64
+	}{
+		{name: "valid count", line: `{"type":"cache-write-tokens","cacheWriteTokens":11}`, want: 11},
+		{name: "zero ignored", line: `{"type":"cache-write-tokens","cacheWriteTokens":0}`, want: 0},
+		{name: "negative ignored", line: `{"type":"cache-write-tokens","cacheWriteTokens":-3}`, want: 0},
+		{name: "string ignored", line: `{"type":"cache-write-tokens","cacheWriteTokens":"12"}`, want: 0},
+		{name: "absent ignored", line: `{"type":"cache-write-tokens"}`, want: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := commandCodeCacheWriteTokens([]byte(tt.line)); got != tt.want {
+				t.Errorf("commandCodeCacheWriteTokens = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMapCommandCodeFinishReason(t *testing.T) {
+	tests := []struct {
+		name        string
+		reason      string
+		sawToolCall bool
+		want        string
+	}{
+		// 1.84.0 isRefusalFinishReason covers refusal/content_filter/content-filter.
+		{name: "refusal", reason: "refusal", want: "content_filter"},
+		{name: "content_filter", reason: "content_filter", want: "content_filter"},
+		{name: "content-filter", reason: "content-filter", want: "content_filter"},
+		{name: "refusal with whitespace", reason: " REFUSAL ", want: "content_filter"},
+		{name: "tool calls", reason: "tool-calls", want: "tool_calls"},
+		{name: "tool_calls seen", reason: "tool_calls", want: "tool_calls"},
+		{name: "length", reason: "length", want: "length"},
+		{name: "max_tokens", reason: "max_tokens", want: "length"},
+		{name: "end_turn", reason: "end_turn", want: "stop"},
+		{name: "empty with tool call", reason: "", sawToolCall: true, want: "tool_calls"},
+		{name: "empty", reason: "", want: "stop"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := mapCommandCodeFinishReason(tt.reason, tt.sawToolCall); got != tt.want {
+				t.Errorf("mapCommandCodeFinishReason(%q, %v) = %q, want %q", tt.reason, tt.sawToolCall, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCommandCodeEventFinishReason(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+		want string
+	}{
+		{
+			name: "finishReason drives the mapping",
+			line: `{"type":"finish","finishReason":"tool-calls","rawFinishReason":"end_turn"}`,
+			want: "tool_calls",
+		},
+		{
+			name: "rawFinishReason is the fallback",
+			line: `{"type":"finish","rawFinishReason":"max_tokens"}`,
+			want: "length",
+		},
+		{
+			// consumedStopReason checks both fields before mapping finishReason.
+			name: "refusal in rawFinishReason wins",
+			line: `{"type":"finish","finishReason":"tool-calls","rawFinishReason":"refusal"}`,
+			want: "content_filter",
+		},
+		{
+			name: "refusal in finishReason wins",
+			line: `{"type":"finish","finishReason":"refusal","rawFinishReason":"end_turn"}`,
+			want: "content_filter",
+		},
+		{
+			name: "no reasons",
+			line: `{"type":"finish"}`,
+			want: "stop",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := commandCodeEventFinishReason([]byte(tt.line), false); got != tt.want {
+				t.Errorf("commandCodeEventFinishReason = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

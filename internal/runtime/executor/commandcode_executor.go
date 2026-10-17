@@ -93,7 +93,7 @@ func (e *CommandCodeExecutor) injectHeaders(req *http.Request, auth *cliproxyaut
 	}
 
 	// CLI fingerprint headers — the official CLI sets these in lowercase.
-	// Verified against command-code@1.74.2 buildCommandAuthHeaders / buildCommandApiHeaders.
+	// Verified against command-code@1.84.0 buildCommandAuthHeaders / buildCommandApiHeaders.
 	// Header set: x-cli-environment, x-command-code-version, optional x-cli-surface,
 	// x-session-id, x-project-slug, x-taste-learning, optional x-oss-primary-provider /
 	// x-cmd-zdr / x-cmd-provider-deepseek-internal, traceparent, User-Agent:cli.
@@ -410,6 +410,8 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 			promptTokens     int64
 			completionTokens int64
 			cachedTokens     int64
+			cacheWriteTokens int64
+			capturedCacheWs  int64
 			chunkCount       int
 			textChunkCount   int
 			toolCallCount    int
@@ -445,7 +447,7 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 				emitCommandCodeTranslatedStreamChunk(ctx, out, to, responseFormat, req.Model, opts.OriginalRequest, translated, chunk, &param)
 
 			case chunkType == "reasoning-delta":
-				// command-code@1.74.2 consumeStream handles reasoning-start /
+				// command-code@1.84.0 consumeStream handles reasoning-start /
 				// reasoning-delta / reasoning-end plus provider-metadata.
 				// Forward deltas as OpenAI reasoning_content so clients that
 				// surface thinking see it.
@@ -486,22 +488,28 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 			case chunkType == "finish":
 				finished = true
 				usageNode := gjson.GetBytes(line, "totalUsage")
+				if cacheWrite := usageNode.Get("inputTokenDetails.cacheWriteTokens"); cacheWrite.Exists() && cacheWrite.Int() > 0 {
+					cacheWriteTokens = cacheWrite.Int()
+				}
+				// 1.84.0: the separately captured cache-write count only
+				// applies when the finish event reported none.
+				if cacheWriteTokens == 0 && capturedCacheWs > 0 {
+					cacheWriteTokens = capturedCacheWs
+				}
 				if usageNode.Exists() && !usageSent {
 					usageSent = true
 					promptTokens = usageNode.Get("inputTokens").Int()
 					completionTokens = usageNode.Get("outputTokens").Int()
 					detail := usage.Detail{
-						InputTokens:  promptTokens,
-						OutputTokens: completionTokens,
+						InputTokens:         promptTokens,
+						OutputTokens:        completionTokens,
+						CacheCreationTokens: cacheWriteTokens,
 					}
-					// command-code@1.74.2 finish event: totalUsage.inputTokenDetails
+					// command-code@1.84.0 finish event: totalUsage.inputTokenDetails
 					// carries cacheReadTokens / cacheWriteTokens.
 					if cached := usageNode.Get("inputTokenDetails.cacheReadTokens"); cached.Exists() {
 						detail.CachedTokens = cached.Int()
 						cachedTokens = cached.Int()
-					}
-					if cacheWrite := usageNode.Get("inputTokenDetails.cacheWriteTokens"); cacheWrite.Exists() {
-						detail.CacheCreationTokens = cacheWrite.Int()
 					}
 					detail.TotalTokens = promptTokens + completionTokens
 					if detail.TotalTokens == 0 {
@@ -509,12 +517,9 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 					}
 					reporter.publish(ctx, detail)
 				}
-				// command-code@1.74.2: finishReason falls back to rawFinishReason.
-				finishReasonRaw := gjson.GetBytes(line, "finishReason").String()
-				if finishReasonRaw == "" {
-					finishReasonRaw = gjson.GetBytes(line, "rawFinishReason").String()
-				}
-				finishReason := mapCommandCodeFinishReason(finishReasonRaw, sawToolCall)
+				// command-code@1.84.0: a refusal in either finishReason or
+				// rawFinishReason wins over the other mapping.
+				finishReason := commandCodeEventFinishReason(line, sawToolCall)
 				chunk := buildCCFinishChunk(promptTokens, completionTokens, cachedTokens, finishReason)
 				emitCommandCodeTranslatedStreamChunk(ctx, out, to, responseFormat, req.Model, opts.OriginalRequest, translated, chunk, &param)
 				emitCommandCodeTranslatedStreamChunk(ctx, out, to, responseFormat, req.Model, opts.OriginalRequest, translated, []byte("data: [DONE]"), &param)
@@ -529,10 +534,19 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 			case chunkType == "provider-metadata":
 				// Carries providerMetadata (e.g. Anthropic 1h-cache write
 				// tokens via readCacheWriteTokens1h); unchanged in the
-				// 1.74.2 consumeStream.
+				// 1.84.0 consumeStream.
 				// Informational only — the CLI merges
 				// cacheWriteTokens1h into usage and continues. Never treat it
 				// as an error or completion signal.
+				continue
+
+			case chunkType == "cache-write-tokens":
+				// consumeStream reads cacheWriteTokens from this event
+				// (readCapturedCacheWriteTokens) and only applies it at the end
+				// when the finish usage reported none.
+				if captured := commandCodeCacheWriteTokens(line); captured > 0 {
+					capturedCacheWs = captured
+				}
 				continue
 
 			case chunkType == "error":
@@ -637,7 +651,7 @@ func (e *CommandCodeExecutor) buildHTTPRequest(ctx context.Context, baseURL, end
 
 func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opts cliproxyexecutor.Options, auth *cliproxyauth.Auth) []byte {
 	payload := req.Payload
-	// Wire model IDs match command-code@1.74.2 catalog canonical form
+	// Wire model IDs match command-code@1.84.0 catalog canonical form
 	// (bare Claude/GPT ids, org/name for gateway models) — not billing
 	// "provider:id" prefixes.
 	model := canonicalizeCommandCodeModel(req.Model)
@@ -668,7 +682,7 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 		maxTokens = gjson.GetBytes(translated, "max_completion_tokens").Int()
 	}
 	if maxTokens == 0 {
-		// Official CLI default: Lk=64e3 in command-code@1.74.2
+		// Official CLI default: Lk=64e3 in command-code@1.84.0
 		// (createModelClient maxOutputTokens fallback).
 		maxTokens = 64000
 	}
@@ -680,13 +694,13 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 	if sysPrompt == "" {
 		sysPrompt = gjson.GetBytes(payload, "instructions").String()
 	}
-	// Params mirror command-code@1.74.2 createModelClient body.params: model,
+	// Params mirror command-code@1.84.0 createModelClient body.params: model,
 	// messages, tools, system (or systemSections via toWireSystem for cache
 	// control), max_tokens, stream (always true). Optional temperature /
 	// reasoning_effort are added below when present.
 	params := fmt.Sprintf(`"model":%s,"messages":%s,"tools":%s,"max_tokens":%d,"stream":true`,
 		ccEncode(model), messages, convertToolsForCC(translated), maxTokens)
-	// Body shape mirrors command-code@1.74.2 transport.postStream({route:Ok,body}):
+	// Body shape mirrors command-code@1.84.0 transport.postStream({route:Ok,body}):
 	// config + memory/taste/skills null + permissionMode + optional threadId
 	// (UUID only) + params. No "mode" for regular chat (CLI omits when unset).
 	// config.environment is the runtime platform string (NOT "production",
@@ -832,11 +846,11 @@ func normalizeCommandCodeBudget(budget int) (string, bool) {
 }
 
 // ccDateSuffixRegex matches an 8-digit date suffix (e.g. -20250514 or @20250514)
-// matching Pr in command-code@1.74.2 dist/cli.mjs (unchanged since 1.44.0).
+// matching Pr in command-code@1.84.0 dist/cli.mjs (unchanged since 1.44.0).
 var ccDateSuffixRegex = regexp.MustCompile(`[-@]\d{8}$`)
 
 // canonicalizeCommandCodeModel maps client/billing model ids to the canonical
-// form used by command-code@1.74.2 on the /alpha/generate wire (params.model).
+// form used by command-code@1.84.0 on the /alpha/generate wire (params.model).
 //
 // It mirrors the CLI's canonicalizeModelId / tryResolveCanonical chain:
 //  1. billing prefixes (anthropic:/openai:) and thinking suffixes are dropped;
@@ -914,7 +928,7 @@ func findKnownCommandCodeModel(model string) (string, bool) {
 	return id, ok
 }
 
-// commandCodeDeprecatedModels mirrors the command-code@1.74.2 replacement maps
+// commandCodeDeprecatedModels mirrors the command-code@1.84.0 replacement maps
 // (the id-replacement map plus the case-normalizer map in dist/cli.mjs).
 var commandCodeDeprecatedModels = map[string]string{
 	"claude-sonnet-4-20250514":   "claude-sonnet-4-6",
@@ -1117,7 +1131,7 @@ func commandCodeMessageContent(content gjson.Result) string {
 }
 
 // formatCommandCodeContentArray converts message content blocks into the wire
-// shape expected by command-code@1.74.2 (toWireMessages in dist/cli.mjs).
+// shape expected by command-code@1.84.0 (toWireMessages in dist/cli.mjs).
 // Text blocks are formatted as {"type":"text","text":...}, and image blocks
 // (OpenAI image_url or Anthropic image) are formatted as
 // {"type":"image","image":<url or dataURL>,"mimeType":<mimeType>}.
@@ -1216,7 +1230,7 @@ func convertToolsForCC(translated []byte) string {
 		return "[]"
 	}
 
-	// toWireTools in command-code@1.74.2 emits {name, description, input_schema}
+	// toWireTools in command-code@1.84.0 emits {name, description, input_schema}
 	// only — no "type":"function" wrapper field.
 	var converted []json.RawMessage
 	for _, tool := range tools.Array() {
@@ -1392,6 +1406,21 @@ func commandCodeToolArguments(line []byte) string {
 	return "{}"
 }
 
+// commandCodeCacheWriteTokens mirrors readCapturedCacheWriteTokens in
+// command-code@1.84.0: the "cache-write-tokens" stream event carries a
+// non-negative cacheWriteTokens count that the CLI merges into usage when the
+// finish event did not report one.
+func commandCodeCacheWriteTokens(line []byte) int64 {
+	value := gjson.GetBytes(line, "cacheWriteTokens")
+	if !value.Exists() || value.Type != gjson.Number {
+		return 0
+	}
+	if n := value.Int(); n > 0 {
+		return n
+	}
+	return 0
+}
+
 func parseCommandCodeStreamErrorMessage(line []byte) string {
 	msg := gjson.GetBytes(line, "error.message").String()
 	if msg == "" {
@@ -1408,14 +1437,49 @@ func parseCommandCodeStreamErrorMessage(line []byte) string {
 	return msg
 }
 
+// commandCodeRefusalFinishReasons mirrors MT in command-code@1.84.0
+// (["refusal", "content_filter", "content-filter"]). The CLI's
+// isRefusalFinishReason() treats those three as a refusal stop (normalizeStopReason
+// reports "refusal", consumedStopReason reports "refusal"), so the proxy maps
+// them to OpenAI's content_filter.
+var commandCodeRefusalFinishReasons = map[string]bool{
+	"refusal":        true,
+	"content_filter": true,
+	"content-filter": true,
+}
+
+// commandCodeIsRefusalFinishReason mirrors isRefusalFinishReason in
+// command-code@1.84.0: trim, lowercase, then look up the refusal set.
+func commandCodeIsRefusalFinishReason(reason string) bool {
+	return commandCodeRefusalFinishReasons[strings.ToLower(strings.TrimSpace(reason))]
+}
+
+// commandCodeEventFinishReason resolves the finish reason of a "finish" event,
+// mirroring consumedStopReason in command-code@1.84.0: a refusal in either
+// finishReason or rawFinishReason wins, then finishReason drives the
+// tool_calls / max_tokens mapping, and rawFinishReason is only a fallback when
+// finishReason is absent.
+func commandCodeEventFinishReason(line []byte, sawToolCall bool) string {
+	finishReason := gjson.GetBytes(line, "finishReason").String()
+	rawFinishReason := gjson.GetBytes(line, "rawFinishReason").String()
+	if commandCodeIsRefusalFinishReason(finishReason) || commandCodeIsRefusalFinishReason(rawFinishReason) {
+		return "content_filter"
+	}
+	if finishReason == "" {
+		finishReason = rawFinishReason
+	}
+	return mapCommandCodeFinishReason(finishReason, sawToolCall)
+}
+
 func mapCommandCodeFinishReason(reason string, sawToolCall bool) string {
+	if commandCodeIsRefusalFinishReason(reason) {
+		return "content_filter"
+	}
 	switch strings.TrimSpace(reason) {
 	case "tool-calls", "tool_calls", "toolUse":
 		return "tool_calls"
 	case "length", "max_tokens", "max-tokens", "max_output_tokens":
 		return "length"
-	case "content_filter":
-		return "content_filter"
 	}
 	if sawToolCall {
 		return "tool_calls"
@@ -1443,6 +1507,8 @@ func (e *CommandCodeExecutor) aggregateStreamToOpenAI(ctx context.Context, body 
 		promptTokens     int64
 		completionTokens int64
 		cachedTokens     int64
+		cacheWriteTokens int64
+		capturedCacheWs  int64
 		finished         bool
 		sawToolCall      bool
 		finishReason     string
@@ -1509,13 +1575,16 @@ func (e *CommandCodeExecutor) aggregateStreamToOpenAI(ctx context.Context, body 
 				if cached := usageNode.Get("inputTokenDetails.cacheReadTokens"); cached.Exists() {
 					cachedTokens = cached.Int()
 				}
+				if cacheWrite := usageNode.Get("inputTokenDetails.cacheWriteTokens"); cacheWrite.Exists() && cacheWrite.Int() > 0 {
+					cacheWriteTokens = cacheWrite.Int()
+				}
 			}
-			// command-code@1.74.2: finishReason falls back to rawFinishReason.
-			finishReasonRaw := gjson.GetBytes(line, "finishReason").String()
-			if finishReasonRaw == "" {
-				finishReasonRaw = gjson.GetBytes(line, "rawFinishReason").String()
+			if cacheWriteTokens == 0 && capturedCacheWs > 0 {
+				cacheWriteTokens = capturedCacheWs
 			}
-			finishReason = mapCommandCodeFinishReason(finishReasonRaw, sawToolCall)
+			// command-code@1.84.0: a refusal in either finishReason or
+			// rawFinishReason wins over the other mapping.
+			finishReason = commandCodeEventFinishReason(line, sawToolCall)
 
 		case "tool-result":
 			// Server-executed tool result; skip as non-assistant content.
@@ -1524,6 +1593,14 @@ func (e *CommandCodeExecutor) aggregateStreamToOpenAI(ctx context.Context, body 
 		case "provider-metadata":
 			// readCacheWriteTokens1h — Anthropic 1h-cache write tokens.
 			// Informational only — skip like the CLI.
+			continue
+
+		case "cache-write-tokens":
+			// 1.84.0 separately reports cache-write tokens; the CLI applies
+			// them only when the finish event carried none.
+			if captured := commandCodeCacheWriteTokens(line); captured > 0 {
+				capturedCacheWs = captured
+			}
 			continue
 
 		case "error":
@@ -1550,9 +1627,10 @@ func (e *CommandCodeExecutor) aggregateStreamToOpenAI(ctx context.Context, body 
 	}
 
 	detail := usage.Detail{
-		InputTokens:  promptTokens,
-		OutputTokens: completionTokens,
-		CachedTokens: cachedTokens,
+		InputTokens:         promptTokens,
+		OutputTokens:        completionTokens,
+		CachedTokens:        cachedTokens,
+		CacheCreationTokens: cacheWriteTokens,
 	}
 	detail.TotalTokens = detail.InputTokens + detail.OutputTokens
 	if detail.TotalTokens == 0 {
