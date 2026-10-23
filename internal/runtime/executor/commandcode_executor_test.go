@@ -81,7 +81,7 @@ func TestCommandCodeExecutor_ExecuteStream_CodexResponseFormat(t *testing.T) {
 }
 
 func TestCommandCodeExecutor_ExecuteStream_OpenAIFormatReasoning(t *testing.T) {
-	// command-code@1.84.0 stream events: reasoning-start/delta/end + text-delta + finish
+	// command-code@1.88.0 stream events: reasoning-start/delta/end + text-delta + finish
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Write([]byte(`{"type":"reasoning-start"}` + "\n"))
@@ -395,7 +395,7 @@ func TestCommandCodeExecutor_Execute_NonStreamResponsesFormat(t *testing.T) {
 }
 
 func TestCommandCodeExecutor_ExecuteStream_RawFinishReasonAndCacheWrite(t *testing.T) {
-	// command-code@1.84.0: finish event may carry rawFinishReason instead of
+	// command-code@1.88.0: finish event may carry rawFinishReason instead of
 	// finishReason, and inputTokenDetails.cacheWriteTokens.
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -501,7 +501,7 @@ func TestCommandCodeExecutor_buildRequestBody(t *testing.T) {
 			name:      "openai tools passed through",
 			payload:   `{"model":"test","messages":[{"role":"user","content":"inspect"}],"stream":true,"tools":[{"type":"function","function":{"name":"list_files","description":"List files","parameters":{"type":"object","properties":{"path":{"type":"string"}}}}}],"tool_choice":"auto","parallel_tool_calls":true}`,
 			srcFormat: "openai",
-			// command-code@1.84.0 toWireTools: {name, description, input_schema} only (no type:function)
+			// command-code@1.88.0 toWireTools: {name, description, input_schema} only (no type:function)
 			contains: []string{
 				`"name":"list_files"`,
 				`"description":"List files"`,
@@ -647,6 +647,117 @@ func TestCommandCodeExecutor_buildRequestBody(t *testing.T) {
 	}
 }
 
+func TestClampCommandCodeMaxTokens(t *testing.T) {
+	tests := []struct {
+		name      string
+		model     string
+		maxTokens int64
+		want      int64
+	}{
+		// The /alpha/generate schema caps params.max_tokens at 200000; a
+		// Codex-style max_output_tokens of 384000 must be clamped, not sent.
+		{"oversized request clamped to schema ceiling", "deepseek/deepseek-v4.1-flash", 384000, ccMaxOutputTokens},
+		{"exactly at the ceiling is preserved", "deepseek/deepseek-v4.1-flash", 200000, 200000},
+		{"under the ceiling is preserved", "deepseek/deepseek-v4.1-flash", 32000, 32000},
+		// Catalog entries that advertise maxOutputTokens cap below the schema limit.
+		{"model cap wins over schema ceiling", "Qwen/Qwen3.8-27B", 384000, 32768},
+		{"model cap leaves smaller requests alone", "Qwen/Qwen3.8-27B", 4096, 4096},
+		{"model cap is exact at the boundary", "z-ai/glm-5.3-flash", 131072, 131072},
+		// mistral-large-4 advertises 262144, above the schema ceiling, so the
+		// schema ceiling is the effective limit.
+		{"schema ceiling wins over a higher model cap", "mistral/mistral-large-4", 384000, ccMaxOutputTokens},
+		// Models without a catalog maxOutputTokens still get the schema clamp.
+		// claude-sonnet-5 also exists in the Claude catalog with a 128000 cap;
+		// the commandcode catalog must be consulted, not a cross-provider match.
+		{"uncapped model clamped to schema ceiling", "claude-sonnet-5", 1000000, ccMaxOutputTokens},
+		{"gpt-5.5 clamped to schema ceiling", "gpt-5.5", 1000000, ccMaxOutputTokens},
+		{"unknown model clamped to schema ceiling", "some/unknown-model", 900000, ccMaxOutputTokens},
+		// Non-positive values fall back to the CLI default.
+		{"zero falls back to the CLI default", "claude-sonnet-5", 0, ccDefaultMaxTokens},
+		{"negative falls back to the CLI default", "claude-sonnet-5", -5, ccDefaultMaxTokens},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := clampCommandCodeMaxTokens(tt.model, tt.maxTokens); got != tt.want {
+				t.Errorf("clampCommandCodeMaxTokens(%q, %d) = %d, want %d", tt.model, tt.maxTokens, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestCommandCodeExecutor_buildRequestBody_MaxTokensClamp reproduces the
+// reported failure: a /v1/responses client sending max_output_tokens=384000
+// reached /alpha/generate unclamped and was rejected with
+// 'Too big: expected number to be <=200000 at "params.max_tokens"'.
+func TestCommandCodeExecutor_buildRequestBody_MaxTokensClamp(t *testing.T) {
+	exec := NewCommandCodeExecutor(&config.Config{})
+
+	tests := []struct {
+		name      string
+		model     string
+		payload   string
+		srcFormat string
+		want      int64
+	}{
+		{
+			name:      "responses max_output_tokens over the schema ceiling",
+			model:     "deepseek/deepseek-v4.1-flash",
+			payload:   `{"model":"deepseek/deepseek-v4.1-flash","input":"hi","stream":true,"max_output_tokens":384000}`,
+			srcFormat: "openai-response",
+			want:      ccMaxOutputTokens,
+		},
+		{
+			name:      "chat max_tokens over the schema ceiling",
+			model:     "claude-sonnet-5",
+			payload:   `{"model":"claude-sonnet-5","messages":[{"role":"user","content":"hi"}],"stream":true,"max_tokens":1000000}`,
+			srcFormat: "openai",
+			want:      ccMaxOutputTokens,
+		},
+		{
+			name:      "capped catalog model clamps below the schema ceiling",
+			model:     "Qwen/Qwen3.8-27B",
+			payload:   `{"model":"Qwen/Qwen3.8-27B","messages":[{"role":"user","content":"hi"}],"stream":true,"max_tokens":300000}`,
+			srcFormat: "openai",
+			want:      32768,
+		},
+		{
+			name:      "normal request passes through",
+			model:     "claude-sonnet-5",
+			payload:   `{"model":"claude-sonnet-5","messages":[{"role":"user","content":"hi"}],"stream":true,"max_tokens":4096}`,
+			srcFormat: "openai",
+			want:      4096,
+		},
+		{
+			name:      "missing limit uses the CLI default",
+			model:     "claude-sonnet-5",
+			payload:   `{"model":"claude-sonnet-5","messages":[{"role":"user","content":"hi"}],"stream":true}`,
+			srcFormat: "openai",
+			want:      ccDefaultMaxTokens,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := cliproxyexecutor.Request{
+				Model:   tt.model,
+				Payload: []byte(tt.payload),
+			}
+			opts := cliproxyexecutor.Options{
+				Stream:       true,
+				SourceFormat: sdktranslator.FromString(tt.srcFormat),
+			}
+			body := exec.buildRequestBody(req, opts, nil)
+			got := gjson.GetBytes(body, "params.max_tokens").Int()
+			if got != tt.want {
+				t.Fatalf("params.max_tokens = %d, want %d; body=%s", got, tt.want, body)
+			}
+			if got > ccMaxOutputTokens {
+				t.Fatalf("params.max_tokens = %d exceeds the upstream schema ceiling %d", got, ccMaxOutputTokens)
+			}
+		})
+	}
+}
+
 func TestCanonicalizeCommandCodeModel(t *testing.T) {
 	tests := []struct {
 		in   string
@@ -660,7 +771,7 @@ func TestCanonicalizeCommandCodeModel(t *testing.T) {
 		{"claude-sonnet-4-6-20260215", "claude-sonnet-4-6"},
 		{"claude-sonnet-4-6@20260215", "claude-sonnet-4-6"},
 		{"claude-fable-5-1", "claude-fable-5-1"},
-		// 1.84.0 catalog additions. The trailing "-5" of the 5.5 ids must not be
+		// 1.88.0 catalog additions. The trailing "-5" of the 5.5 ids must not be
 		// mistaken for an 8-digit date suffix.
 		{"claude-sonnet-5-5", "claude-sonnet-5-5"},
 		{"claude-opus-5-5", "claude-opus-5-5"},
@@ -676,11 +787,19 @@ func TestCanonicalizeCommandCodeModel(t *testing.T) {
 		{"meta/muse-spark-open", "meta/muse-spark-open"},
 		{"meta/muse-wonder-1.0", "meta/muse-wonder-1.0"},
 		{"stealth/glyph-cluster:free", "stealth/glyph-cluster:free"},
-		{"stealth/cat-jam:free", "stealth/cat-jam:free"},
+		// 1.88.0 catalog additions.
+		{"minimax/minimax-m3.1-flash", "minimax/minimax-m3.1-flash"},
+		{"ornith/ornith-1.5-122b", "ornith/ornith-1.5-122b"},
+		{"reflection/beam:free", "reflection/beam:free"},
+		// The M3.1 preview id was renamed in 1.88.0.
+		{"minimax/minimax-m3.1-flash-preview", "minimax/minimax-m3.1-flash"},
+		{"minimax/minimax-m3.1-flash-preview:free", "minimax/minimax-m3.1-flash:free"},
 		// Hidden catalog ids are not advertised, so they pass through unchanged
 		// (only the legacy alias map still rewrites tencent/HY3).
 		{"inclusionai/ling-3.1-flash:free", "inclusionai/ling-3.1-flash:free"},
 		{"tencent/HY3", "tencent/Hy3"},
+		// Ids hidden in 1.88.0 are no longer canonicalized to a catalog spelling.
+		{"xiaomi/mimo-v2.5", "xiaomi/mimo-v2.5"},
 		// Catalog casing is restored for ids the client sent lower-cased.
 		{"Minimaxai/minimax-m3", "MiniMaxAI/MiniMax-M3"},
 		{"google/gemini-3.8-flash", "google/gemini-3.8-flash"},
@@ -740,7 +859,7 @@ func TestCommandCodeExecutor_injectHeaders_CLIpfingerprint(t *testing.T) {
 	if got := getLower("x-co-flag"); got != "" {
 		t.Errorf("x-co-flag = %q, want empty (removed from CLI in 1.44.0)", got)
 	}
-	// Optional headers from command-code@1.84.0: only sent when configured.
+	// Optional headers from command-code@1.88.0: only sent when configured.
 	if got := getLower("x-oss-primary-provider"); got != "" {
 		t.Errorf("x-oss-primary-provider = %q, want empty by default", got)
 	}
@@ -911,7 +1030,7 @@ func TestCommandCodeExecutor_ExecuteStream_ToolResultAndStructuredError(t *testi
 }
 
 func TestCommandCodeExecutor_ExecuteStream_ProviderMetadataIgnored(t *testing.T) {
-	// command-code@1.84.0 consumeStream handles a "provider-metadata" event
+	// command-code@1.88.0 consumeStream handles a "provider-metadata" event
 	// (providerMetadata.anthropic usage → cacheWriteTokens1h) as informational
 	// only. The proxy must skip it without erroring and still complete.
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1043,7 +1162,7 @@ func TestMapCommandCodeFinishReason(t *testing.T) {
 		sawToolCall bool
 		want        string
 	}{
-		// 1.84.0 isRefusalFinishReason covers refusal/content_filter/content-filter.
+		// 1.88.0 isRefusalFinishReason covers refusal/content_filter/content-filter.
 		{name: "refusal", reason: "refusal", want: "content_filter"},
 		{name: "content_filter", reason: "content_filter", want: "content_filter"},
 		{name: "content-filter", reason: "content-filter", want: "content_filter"},
