@@ -823,7 +823,7 @@ nonstream-keepalive-interval: 0
 #   3. Or manually create a JSON file in the auths/ directory:
 #      {"type": "commandcode", "api_key": "cc_...", "email": "user@example.com"}
 #
-# Model aliases (synced from command-code@1.84.0).
+# Model aliases (synced from command-code@1.88.0).
 # name  = upstream / registry id (canonical wire form sent to /alpha/generate)
 # alias = client-facing short name
 # Claude/GPT bare ids are already the wire form; aliases mainly shorten
@@ -924,6 +924,8 @@ nonstream-keepalive-interval: 0
 #       alias: "minimax-m2.7"
 #     - name: "MiniMaxAI/MiniMax-M2.5"
 #       alias: "minimax-m2.5"
+#     - name: "minimax/minimax-m3.1-flash"
+#       alias: "minimax-m3.1-flash"
 #     ── MiMo (Go-plan) ──
 #     - name: "xiaomi/mimo-v2.6-pro"
 #       alias: "mimo-v2.6-pro"
@@ -931,10 +933,9 @@ nonstream-keepalive-interval: 0
 #       alias: "mimo-v2.6-pro-ultraspeed"
 #     - name: "xiaomi/mimo-v2.6-flash"
 #       alias: "mimo-v2.6-flash"
-#     - name: "xiaomi/mimo-v2.5-pro"
-#       alias: "mimo-v2.5-pro"
-#     - name: "xiaomi/mimo-v2.5"
-#       alias: "mimo-v2.5"
+#     ── Ornith (Go-plan) ──
+#     - name: "ornith/ornith-1.5-122b"
+#       alias: "ornith-1.5-122b"
 #     ── Qwen (Go-plan) ──
 #     - name: "Qwen/Qwen3.8-Omni-Flash"
 #       alias: "qwen-3.8-omni-flash"
@@ -977,8 +978,8 @@ nonstream-keepalive-interval: 0
 #     ── Stealth ──
 #     - name: "stealth/glyph-cluster:free"
 #       alias: "glyph-cluster"
-#     - name: "stealth/cat-jam:free"
-#       alias: "cat-jam"
+#     - name: "reflection/beam:free"
+#       alias: "beam"
 #     ── Gemini (Pro+ plans) ──
 #     - name: "google/gemini-4-argon"
 #       alias: "gemini-4-argon"

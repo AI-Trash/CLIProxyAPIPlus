@@ -40,6 +40,15 @@ const (
 	ccHeaderProdEnv           = "production"
 	ccDefaultProjectSlug      = "workspace"
 	ccUserAgent               = "cli"
+	// ccDefaultMaxTokens mirrors HT=64e3 in command-code@1.88.0: the
+	// createModelClient maxOutputTokens fallback used when the caller does not
+	// request a limit.
+	ccDefaultMaxTokens = 64000
+	// ccMaxOutputTokens is the hard ceiling the /alpha/generate schema enforces
+	// on params.max_tokens. The upstream rejects larger values with
+	// 400 BAD_REQUEST: 'Too big: expected number to be <=200000 at
+	// "params.max_tokens"', so every request must be clamped before it is sent.
+	ccMaxOutputTokens = 200000
 )
 
 // CommandCodeExecutor implements ProviderExecutor for the Command Code CLI's
@@ -93,7 +102,7 @@ func (e *CommandCodeExecutor) injectHeaders(req *http.Request, auth *cliproxyaut
 	}
 
 	// CLI fingerprint headers — the official CLI sets these in lowercase.
-	// Verified against command-code@1.84.0 buildCommandAuthHeaders / buildCommandApiHeaders.
+	// Verified against command-code@1.88.0 buildCommandAuthHeaders / buildCommandApiHeaders.
 	// Header set: x-cli-environment, x-command-code-version, optional x-cli-surface,
 	// x-session-id, x-project-slug, x-taste-learning, optional x-oss-primary-provider /
 	// x-cmd-zdr / x-cmd-provider-deepseek-internal, traceparent, User-Agent:cli.
@@ -447,7 +456,7 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 				emitCommandCodeTranslatedStreamChunk(ctx, out, to, responseFormat, req.Model, opts.OriginalRequest, translated, chunk, &param)
 
 			case chunkType == "reasoning-delta":
-				// command-code@1.84.0 consumeStream handles reasoning-start /
+				// command-code@1.88.0 consumeStream handles reasoning-start /
 				// reasoning-delta / reasoning-end plus provider-metadata.
 				// Forward deltas as OpenAI reasoning_content so clients that
 				// surface thinking see it.
@@ -491,7 +500,7 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 				if cacheWrite := usageNode.Get("inputTokenDetails.cacheWriteTokens"); cacheWrite.Exists() && cacheWrite.Int() > 0 {
 					cacheWriteTokens = cacheWrite.Int()
 				}
-				// 1.84.0: the separately captured cache-write count only
+				// 1.88.0: the separately captured cache-write count only
 				// applies when the finish event reported none.
 				if cacheWriteTokens == 0 && capturedCacheWs > 0 {
 					cacheWriteTokens = capturedCacheWs
@@ -505,7 +514,7 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 						OutputTokens:        completionTokens,
 						CacheCreationTokens: cacheWriteTokens,
 					}
-					// command-code@1.84.0 finish event: totalUsage.inputTokenDetails
+					// command-code@1.88.0 finish event: totalUsage.inputTokenDetails
 					// carries cacheReadTokens / cacheWriteTokens.
 					if cached := usageNode.Get("inputTokenDetails.cacheReadTokens"); cached.Exists() {
 						detail.CachedTokens = cached.Int()
@@ -517,7 +526,7 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 					}
 					reporter.publish(ctx, detail)
 				}
-				// command-code@1.84.0: a refusal in either finishReason or
+				// command-code@1.88.0: a refusal in either finishReason or
 				// rawFinishReason wins over the other mapping.
 				finishReason := commandCodeEventFinishReason(line, sawToolCall)
 				chunk := buildCCFinishChunk(promptTokens, completionTokens, cachedTokens, finishReason)
@@ -534,7 +543,7 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 			case chunkType == "provider-metadata":
 				// Carries providerMetadata (e.g. Anthropic 1h-cache write
 				// tokens via readCacheWriteTokens1h); unchanged in the
-				// 1.84.0 consumeStream.
+				// 1.88.0 consumeStream.
 				// Informational only — the CLI merges
 				// cacheWriteTokens1h into usage and continues. Never treat it
 				// as an error or completion signal.
@@ -651,7 +660,7 @@ func (e *CommandCodeExecutor) buildHTTPRequest(ctx context.Context, baseURL, end
 
 func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opts cliproxyexecutor.Options, auth *cliproxyauth.Auth) []byte {
 	payload := req.Payload
-	// Wire model IDs match command-code@1.84.0 catalog canonical form
+	// Wire model IDs match command-code@1.88.0 catalog canonical form
 	// (bare Claude/GPT ids, org/name for gateway models) — not billing
 	// "provider:id" prefixes.
 	model := canonicalizeCommandCodeModel(req.Model)
@@ -682,10 +691,11 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 		maxTokens = gjson.GetBytes(translated, "max_completion_tokens").Int()
 	}
 	if maxTokens == 0 {
-		// Official CLI default: Lk=64e3 in command-code@1.84.0
+		// Official CLI default: HT=64e3 in command-code@1.88.0
 		// (createModelClient maxOutputTokens fallback).
-		maxTokens = 64000
+		maxTokens = ccDefaultMaxTokens
 	}
+	maxTokens = clampCommandCodeMaxTokens(model, maxTokens)
 
 	// System prompt from translation takes priority; fall back to instructions
 	if sysPrompt == "" {
@@ -694,13 +704,13 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 	if sysPrompt == "" {
 		sysPrompt = gjson.GetBytes(payload, "instructions").String()
 	}
-	// Params mirror command-code@1.84.0 createModelClient body.params: model,
+	// Params mirror command-code@1.88.0 createModelClient body.params: model,
 	// messages, tools, system (or systemSections via toWireSystem for cache
 	// control), max_tokens, stream (always true). Optional temperature /
 	// reasoning_effort are added below when present.
 	params := fmt.Sprintf(`"model":%s,"messages":%s,"tools":%s,"max_tokens":%d,"stream":true`,
 		ccEncode(model), messages, convertToolsForCC(translated), maxTokens)
-	// Body shape mirrors command-code@1.84.0 transport.postStream({route:Ok,body}):
+	// Body shape mirrors command-code@1.88.0 transport.postStream({route:Ok,body}):
 	// config + memory/taste/skills null + permissionMode + optional threadId
 	// (UUID only) + params. No "mode" for regular chat (CLI omits when unset).
 	// config.environment is the runtime platform string (NOT "production",
@@ -846,11 +856,11 @@ func normalizeCommandCodeBudget(budget int) (string, bool) {
 }
 
 // ccDateSuffixRegex matches an 8-digit date suffix (e.g. -20250514 or @20250514)
-// matching Pr in command-code@1.84.0 dist/cli.mjs (unchanged since 1.44.0).
+// matching Pr in command-code@1.88.0 dist/cli.mjs (unchanged since 1.44.0).
 var ccDateSuffixRegex = regexp.MustCompile(`[-@]\d{8}$`)
 
 // canonicalizeCommandCodeModel maps client/billing model ids to the canonical
-// form used by command-code@1.84.0 on the /alpha/generate wire (params.model).
+// form used by command-code@1.88.0 on the /alpha/generate wire (params.model).
 //
 // It mirrors the CLI's canonicalizeModelId / tryResolveCanonical chain:
 //  1. billing prefixes (anthropic:/openai:) and thinking suffixes are dropped;
@@ -928,8 +938,54 @@ func findKnownCommandCodeModel(model string) (string, bool) {
 	return id, ok
 }
 
-// commandCodeDeprecatedModels mirrors the command-code@1.84.0 replacement maps
-// (the id-replacement map plus the case-normalizer map in dist/cli.mjs).
+// commandCodeModelMaxTokens caches the catalog's per-model output ceilings
+// (catalog maxOutputTokens) keyed by the catalog id, so the per-request clamp
+// below stays allocation-free.
+//
+// The lookup is deliberately scoped to the commandcode catalog: bare ids like
+// "claude-sonnet-5" or "gpt-5.5" also exist in the Claude/Codex catalogs with
+// their own (lower) output ceilings, and a cross-provider lookup would silently
+// apply the wrong one.
+var commandCodeModelMaxTokens = sync.OnceValue(func() map[string]int {
+	models := registry.GetCommandCodeModels()
+	set := make(map[string]int, len(models))
+	for _, info := range models {
+		if info == nil || info.MaxCompletionTokens <= 0 {
+			continue
+		}
+		if id := strings.TrimSpace(info.ID); id != "" {
+			set[id] = info.MaxCompletionTokens
+		}
+	}
+	return set
+})
+
+// clampCommandCodeMaxTokens caps the requested max_tokens for the model.
+//
+// The official CLI clamps in two places before posting to /alpha/generate:
+//   - clampMaxOutputTokens2 / resolveMaxOutputTokens cap the request to the
+//     catalog entry's maxOutputTokens when the entry advertises one;
+//   - the /alpha/generate schema rejects params.max_tokens > 200000 outright.
+//
+// Without the schema clamp a client that asks for more (e.g. a Codex-style
+// max_output_tokens of 384000) is rejected upstream with
+// 400 BAD_REQUEST: 'Too big: expected number to be <=200000 at
+// "params.max_tokens"'.
+func clampCommandCodeMaxTokens(model string, maxTokens int64) int64 {
+	if cap, ok := commandCodeModelMaxTokens()[model]; ok && maxTokens > int64(cap) {
+		maxTokens = int64(cap)
+	}
+	if maxTokens > ccMaxOutputTokens {
+		maxTokens = ccMaxOutputTokens
+	}
+	if maxTokens < 1 {
+		maxTokens = ccDefaultMaxTokens
+	}
+	return maxTokens
+}
+
+// commandCodeDeprecatedModels mirrors the command-code@1.88.0 replacement maps
+// (the id-replacement map plus the renamed-id map in dist/cli.mjs).
 var commandCodeDeprecatedModels = map[string]string{
 	"claude-sonnet-4-20250514":   "claude-sonnet-4-6",
 	"claude-sonnet-4-5-20250929": "claude-sonnet-4-6",
@@ -938,6 +994,9 @@ var commandCodeDeprecatedModels = map[string]string{
 	"claude-haiku-4-5":           "claude-haiku-4-5-20251001",
 	"tencent/hy3":                "tencent/Hy3", // case-normalize free id
 	"tencent/HY3":                "tencent/Hy3",
+	// MiniMax M3.1 Flash left preview in 1.88.0.
+	"minimax/minimax-m3.1-flash-preview":      "minimax/minimax-m3.1-flash",
+	"minimax/minimax-m3.1-flash-preview:free": "minimax/minimax-m3.1-flash:free",
 }
 
 // ccIsUUID reports whether s looks like a UUID (8-4-4-4-12 hex), matching the
@@ -1131,7 +1190,7 @@ func commandCodeMessageContent(content gjson.Result) string {
 }
 
 // formatCommandCodeContentArray converts message content blocks into the wire
-// shape expected by command-code@1.84.0 (toWireMessages in dist/cli.mjs).
+// shape expected by command-code@1.88.0 (toWireMessages in dist/cli.mjs).
 // Text blocks are formatted as {"type":"text","text":...}, and image blocks
 // (OpenAI image_url or Anthropic image) are formatted as
 // {"type":"image","image":<url or dataURL>,"mimeType":<mimeType>}.
@@ -1230,7 +1289,7 @@ func convertToolsForCC(translated []byte) string {
 		return "[]"
 	}
 
-	// toWireTools in command-code@1.84.0 emits {name, description, input_schema}
+	// toWireTools in command-code@1.88.0 emits {name, description, input_schema}
 	// only — no "type":"function" wrapper field.
 	var converted []json.RawMessage
 	for _, tool := range tools.Array() {
@@ -1407,7 +1466,7 @@ func commandCodeToolArguments(line []byte) string {
 }
 
 // commandCodeCacheWriteTokens mirrors readCapturedCacheWriteTokens in
-// command-code@1.84.0: the "cache-write-tokens" stream event carries a
+// command-code@1.88.0: the "cache-write-tokens" stream event carries a
 // non-negative cacheWriteTokens count that the CLI merges into usage when the
 // finish event did not report one.
 func commandCodeCacheWriteTokens(line []byte) int64 {
@@ -1437,7 +1496,7 @@ func parseCommandCodeStreamErrorMessage(line []byte) string {
 	return msg
 }
 
-// commandCodeRefusalFinishReasons mirrors MT in command-code@1.84.0
+// commandCodeRefusalFinishReasons mirrors MT in command-code@1.88.0
 // (["refusal", "content_filter", "content-filter"]). The CLI's
 // isRefusalFinishReason() treats those three as a refusal stop (normalizeStopReason
 // reports "refusal", consumedStopReason reports "refusal"), so the proxy maps
@@ -1449,13 +1508,13 @@ var commandCodeRefusalFinishReasons = map[string]bool{
 }
 
 // commandCodeIsRefusalFinishReason mirrors isRefusalFinishReason in
-// command-code@1.84.0: trim, lowercase, then look up the refusal set.
+// command-code@1.88.0: trim, lowercase, then look up the refusal set.
 func commandCodeIsRefusalFinishReason(reason string) bool {
 	return commandCodeRefusalFinishReasons[strings.ToLower(strings.TrimSpace(reason))]
 }
 
 // commandCodeEventFinishReason resolves the finish reason of a "finish" event,
-// mirroring consumedStopReason in command-code@1.84.0: a refusal in either
+// mirroring consumedStopReason in command-code@1.88.0: a refusal in either
 // finishReason or rawFinishReason wins, then finishReason drives the
 // tool_calls / max_tokens mapping, and rawFinishReason is only a fallback when
 // finishReason is absent.
@@ -1582,7 +1641,7 @@ func (e *CommandCodeExecutor) aggregateStreamToOpenAI(ctx context.Context, body 
 			if cacheWriteTokens == 0 && capturedCacheWs > 0 {
 				cacheWriteTokens = capturedCacheWs
 			}
-			// command-code@1.84.0: a refusal in either finishReason or
+			// command-code@1.88.0: a refusal in either finishReason or
 			// rawFinishReason wins over the other mapping.
 			finishReason = commandCodeEventFinishReason(line, sawToolCall)
 
@@ -1596,7 +1655,7 @@ func (e *CommandCodeExecutor) aggregateStreamToOpenAI(ctx context.Context, body 
 			continue
 
 		case "cache-write-tokens":
-			// 1.84.0 separately reports cache-write tokens; the CLI applies
+			// 1.88.0 separately reports cache-write tokens; the CLI applies
 			// them only when the finish event carried none.
 			if captured := commandCodeCacheWriteTokens(line); captured > 0 {
 				capturedCacheWs = captured

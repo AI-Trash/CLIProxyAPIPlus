@@ -335,7 +335,7 @@ func TestGetDevinModelsFallback(t *testing.T) {
 }
 
 // TestGetCommandCodeModelsCatalog pins the ids added by the
-// command-code@1.84.0 sync and the context windows the CLI catalog advertises.
+// command-code@1.88.0 sync and the context windows the CLI catalog advertises.
 func TestGetCommandCodeModelsCatalog(t *testing.T) {
 	models := GetCommandCodeModels()
 	if len(models) == 0 {
@@ -357,7 +357,7 @@ func TestGetCommandCodeModelsCatalog(t *testing.T) {
 	}
 
 	// Ids added in 1.74.2 (claude-sonnet-5-5, gpt-6.1-sol, V4.1 Flash Fast)
-	// must stay in the catalog, and the ids 1.84.0 added must be listed.
+	// must stay in the catalog, and the ids 1.88.0 added must be listed.
 	for _, id := range []string{
 		"claude-sonnet-5-5",
 		"gpt-6.1-sol",
@@ -371,7 +371,10 @@ func TestGetCommandCodeModelsCatalog(t *testing.T) {
 		"meta/muse-wonder-1.0",
 		"inclusionai/ling-3.1-flash",
 		"stealth/glyph-cluster:free",
-		"stealth/cat-jam:free",
+		// Added in 1.88.0.
+		"minimax/minimax-m3.1-flash",
+		"ornith/ornith-1.5-122b",
+		"reflection/beam:free",
 	} {
 		if byID[id] == nil {
 			t.Errorf("expected %s in GetCommandCodeModels()", id)
@@ -385,18 +388,26 @@ func TestGetCommandCodeModelsCatalog(t *testing.T) {
 		"tencent/Hy3",
 		"minimax/minimax-m3-free",
 		"MiniMaxAI/MiniMax-M3-Free",
+		"minimax/minimax-m3.1-flash:free",
+		"minimax/minimax-m2.7-free",
 		"meituan/LongCat-2.0:free",
 		"inclusionai/ling-3.1-flash:free",
-		// Dropped from the 1.84.0 catalog entirely.
+		"ornith/ornith-1.5-122b:free",
+		// Hidden as of 1.88.0.
+		"xiaomi/mimo-v2.5",
+		"xiaomi/mimo-v2.5-pro",
+		// Dropped from the catalog entirely.
 		"inclusionai/ling-3.0-flash-free",
 		"inclusionai/ling-3.0-flash-sante:free",
+		// Dropped in 1.88.0 (replaced by reflection/beam:free).
+		"stealth/cat-jam:free",
 	} {
 		if byID[id] != nil {
 			t.Errorf("hidden model %s should not be in GetCommandCodeModels()", id)
 		}
 	}
 
-	// Context windows advertised by the 1.84.0 CLI catalog.
+	// Context windows advertised by the 1.88.0 CLI catalog.
 	contexts := map[string]int{
 		"claude-sonnet-5-5":                 1000000,
 		"gpt-6.1-sol":                       1050000,
@@ -405,7 +416,10 @@ func TestGetCommandCodeModelsCatalog(t *testing.T) {
 		"deepseek/deepseek-v4.1-flash-fast": 1000000,
 		"mistral/mistral-large-4":           524288,
 		"nvidia/nemotron-3.5-super-vl":      262144,
-		"stealth/cat-jam:free":              1048576,
+		"stealth/glyph-cluster:free":        256000,
+		"minimax/minimax-m3.1-flash":        1000000,
+		"ornith/ornith-1.5-122b":            262144,
+		"reflection/beam:free":              1048576,
 	}
 	for id, want := range contexts {
 		info := byID[id]
@@ -414,6 +428,37 @@ func TestGetCommandCodeModelsCatalog(t *testing.T) {
 		}
 		if info.ContextLength != want {
 			t.Errorf("%s ContextLength = %d, want %d", id, info.ContextLength, want)
+		}
+	}
+
+	// Per-model output ceilings: only the catalog entries that advertise
+	// maxOutputTokens carry MaxCompletionTokens.
+	maxOut := map[string]int{
+		"z-ai/glm-5.3-flash":         131072,
+		"z-ai/glm-5.3-flashx":        131072,
+		"Qwen/Qwen3.8-Omni-Flash":    131072,
+		"Qwen/Qwen3.8-Max-Prime":     131072,
+		"Qwen/Qwen3.8-27B":           32768,
+		"mistral/mistral-large-4":    262144,
+		"poolside/laguna-s-2.1-free": 32768,
+		"inclusionai/ling-3.1-flash": 32768,
+		"stealth/glyph-cluster:free": 256000,
+		"reflection/beam:free":       131072,
+	}
+	for id, want := range maxOut {
+		info := byID[id]
+		if info == nil {
+			t.Errorf("expected %s in GetCommandCodeModels()", id)
+			continue
+		}
+		if info.MaxCompletionTokens != want {
+			t.Errorf("%s MaxCompletionTokens = %d, want %d", id, info.MaxCompletionTokens, want)
+		}
+	}
+	// Entries without a catalog maxOutputTokens must not invent one.
+	for _, id := range []string{"claude-sonnet-5", "deepseek/deepseek-v4.1-flash", "gpt-5.5"} {
+		if info := byID[id]; info != nil && info.MaxCompletionTokens != 0 {
+			t.Errorf("%s MaxCompletionTokens = %d, want 0 (catalog advertises null)", id, info.MaxCompletionTokens)
 		}
 	}
 }
