@@ -81,7 +81,7 @@ func TestCommandCodeExecutor_ExecuteStream_CodexResponseFormat(t *testing.T) {
 }
 
 func TestCommandCodeExecutor_ExecuteStream_OpenAIFormatReasoning(t *testing.T) {
-	// command-code@1.88.0 stream events: reasoning-start/delta/end + text-delta + finish
+	// command-code@1.91.1 stream events: reasoning-start/delta/end + text-delta + finish
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Write([]byte(`{"type":"reasoning-start"}` + "\n"))
@@ -395,7 +395,7 @@ func TestCommandCodeExecutor_Execute_NonStreamResponsesFormat(t *testing.T) {
 }
 
 func TestCommandCodeExecutor_ExecuteStream_RawFinishReasonAndCacheWrite(t *testing.T) {
-	// command-code@1.88.0: finish event may carry rawFinishReason instead of
+	// command-code@1.91.1: finish event may carry rawFinishReason instead of
 	// finishReason, and inputTokenDetails.cacheWriteTokens.
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -501,7 +501,7 @@ func TestCommandCodeExecutor_buildRequestBody(t *testing.T) {
 			name:      "openai tools passed through",
 			payload:   `{"model":"test","messages":[{"role":"user","content":"inspect"}],"stream":true,"tools":[{"type":"function","function":{"name":"list_files","description":"List files","parameters":{"type":"object","properties":{"path":{"type":"string"}}}}}],"tool_choice":"auto","parallel_tool_calls":true}`,
 			srcFormat: "openai",
-			// command-code@1.88.0 toWireTools: {name, description, input_schema} only (no type:function)
+			// command-code@1.91.1 toWireTools: {name, description, input_schema} only (no type:function)
 			contains: []string{
 				`"name":"list_files"`,
 				`"description":"List files"`,
@@ -771,26 +771,35 @@ func TestCanonicalizeCommandCodeModel(t *testing.T) {
 		{"claude-sonnet-4-6-20260215", "claude-sonnet-4-6"},
 		{"claude-sonnet-4-6@20260215", "claude-sonnet-4-6"},
 		{"claude-fable-5-1", "claude-fable-5-1"},
-		// 1.88.0 catalog additions. The trailing "-5" of the 5.5 ids must not be
-		// mistaken for an 8-digit date suffix.
+		{"claude-fable-5-2", "claude-fable-5-2"},
+		// The trailing "-5" of the 5.5 ids must not be mistaken for an
+		// 8-digit date suffix.
 		{"claude-sonnet-5-5", "claude-sonnet-5-5"},
 		{"claude-opus-5-5", "claude-opus-5-5"},
 		{"claude-haiku-5-5", "claude-haiku-5-5"},
 		{"anthropic:claude-sonnet-5-5", "claude-sonnet-5-5"},
 		{"gpt-6.1-sol", "gpt-6.1-sol"},
+		{"gpt-6.2-astra", "gpt-6.2-astra"},
 		{"deepseek/deepseek-v4.1-flash-fast", "deepseek/deepseek-v4.1-flash-fast"},
+		{"deepseek/deepseek-v4.1-flash-ultrafast", "deepseek/deepseek-v4.1-flash-ultrafast"},
 		{"inclusionai/ling-3.1-flash", "inclusionai/ling-3.1-flash"},
+		{"inclusionai/ling-3.1-flash-1019", "inclusionai/ling-3.1-flash-1019"},
 		{"Qwen/Qwen3.8-Max-Prime", "Qwen/Qwen3.8-Max-Prime"},
+		{"Qwen/Qwen4-Max", "Qwen/Qwen4-Max"},
 		{"google/gemini-4-argon", "google/gemini-4-argon"},
+		{"google/gemini-4-carbon", "google/gemini-4-carbon"},
 		{"nvidia/nemotron-3.5-super-vl", "nvidia/nemotron-3.5-super-vl"},
 		{"mistral/mistral-large-4", "mistral/mistral-large-4"},
 		{"meta/muse-spark-open", "meta/muse-spark-open"},
 		{"meta/muse-wonder-1.0", "meta/muse-wonder-1.0"},
+		{"meta/muse-ember", "meta/muse-ember"},
 		{"stealth/glyph-cluster:free", "stealth/glyph-cluster:free"},
-		// 1.88.0 catalog additions.
 		{"minimax/minimax-m3.1-flash", "minimax/minimax-m3.1-flash"},
 		{"ornith/ornith-1.5-122b", "ornith/ornith-1.5-122b"},
-		{"reflection/beam:free", "reflection/beam:free"},
+		{"moonshotai/Kimi-K3.1-Pro", "moonshotai/Kimi-K3.1-Pro"},
+		{"tencent/hy4", "tencent/hy4"},
+		{"thinkingmachines/inkling-2-small:free", "thinkingmachines/inkling-2-small:free"},
+		{"recursive/flint-v1.0:free", "recursive/flint-v1.0:free"},
 		// The M3.1 preview id was renamed in 1.88.0.
 		{"minimax/minimax-m3.1-flash-preview", "minimax/minimax-m3.1-flash"},
 		{"minimax/minimax-m3.1-flash-preview:free", "minimax/minimax-m3.1-flash:free"},
@@ -798,6 +807,8 @@ func TestCanonicalizeCommandCodeModel(t *testing.T) {
 		// (only the legacy alias map still rewrites tencent/HY3).
 		{"inclusionai/ling-3.1-flash:free", "inclusionai/ling-3.1-flash:free"},
 		{"tencent/HY3", "tencent/Hy3"},
+		{"reflection/beam:free", "reflection/beam:free"},
+		{"poolside/laguna-s-2.1-free", "poolside/laguna-s-2.1-free"},
 		// Ids hidden in 1.88.0 are no longer canonicalized to a catalog spelling.
 		{"xiaomi/mimo-v2.5", "xiaomi/mimo-v2.5"},
 		// Catalog casing is restored for ids the client sent lower-cased.
@@ -859,15 +870,17 @@ func TestCommandCodeExecutor_injectHeaders_CLIpfingerprint(t *testing.T) {
 	if got := getLower("x-co-flag"); got != "" {
 		t.Errorf("x-co-flag = %q, want empty (removed from CLI in 1.44.0)", got)
 	}
-	// Optional headers from command-code@1.88.0: only sent when configured.
+	// Optional headers from command-code@1.91.1: only sent when configured.
 	if got := getLower("x-oss-primary-provider"); got != "" {
 		t.Errorf("x-oss-primary-provider = %q, want empty by default", got)
 	}
 	if got := getLower("x-cmd-zdr"); got != "" {
 		t.Errorf("x-cmd-zdr = %q, want empty by default", got)
 	}
+	// x-cmd-provider-deepseek-internal was dropped from the CLI header set
+	// in 1.91.1; sending it would mark the request as a non-CLI client.
 	if got := getLower("x-cmd-provider-deepseek-internal"); got != "" {
-		t.Errorf("x-cmd-provider-deepseek-internal = %q, want empty by default", got)
+		t.Errorf("x-cmd-provider-deepseek-internal = %q, want empty (removed from CLI in 1.91.1)", got)
 	}
 	// x-cli-surface is only set by the CLI's alternate front-ends (`cmd acp`,
 	// `cmd rpc`); the regular chat path never sets it, so it must be absent.
@@ -941,8 +954,8 @@ func TestCommandCodeExecutor_injectHeaders_CLIpfingerprint(t *testing.T) {
 	if got := getLowerFromReq(httpReq3, "x-cmd-zdr"); got != "1" {
 		t.Errorf("x-cmd-zdr = %q, want 1", got)
 	}
-	if got := getLowerFromReq(httpReq3, "x-cmd-provider-deepseek-internal"); got != "1" {
-		t.Errorf("x-cmd-provider-deepseek-internal = %q, want 1", got)
+	if got := getLowerFromReq(httpReq3, "x-cmd-provider-deepseek-internal"); got != "" {
+		t.Errorf("x-cmd-provider-deepseek-internal = %q, want empty (removed from CLI in 1.91.1)", got)
 	}
 
 	// x-cli-surface is opt-in: a credential may pin the surface the CLI would
@@ -1030,13 +1043,16 @@ func TestCommandCodeExecutor_ExecuteStream_ToolResultAndStructuredError(t *testi
 }
 
 func TestCommandCodeExecutor_ExecuteStream_ProviderMetadataIgnored(t *testing.T) {
-	// command-code@1.88.0 consumeStream handles a "provider-metadata" event
+	// command-code@1.91.1 consumeStream handles a "provider-metadata" event
 	// (providerMetadata.anthropic usage → cacheWriteTokens1h) as informational
 	// only. The proxy must skip it without erroring and still complete.
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte(`{"type":"text-start"}` + "\n"))
 		w.Write([]byte(`{"type":"text-delta","text":"hi"}` + "\n"))
 		w.Write([]byte(`{"type":"provider-metadata","providerMetadata":{"anthropic":{"usage":{"cache_creation":{"ephemeral_1h_input_tokens":7}}}}}` + "\n"))
+		w.Write([]byte(`{"type":"file"}` + "\n"))
+		w.Write([]byte(`{"type":"source"}` + "\n"))
 		w.Write([]byte(`{"type":"text-delta","text":" there"}` + "\n"))
 		w.Write([]byte(`{"type":"finish","finishReason":"end_turn","totalUsage":{"inputTokens":10,"outputTokens":2}}` + "\n"))
 	}))
@@ -1162,7 +1178,7 @@ func TestMapCommandCodeFinishReason(t *testing.T) {
 		sawToolCall bool
 		want        string
 	}{
-		// 1.88.0 isRefusalFinishReason covers refusal/content_filter/content-filter.
+		// 1.91.1 isRefusalFinishReason covers refusal/content_filter/content-filter.
 		{name: "refusal", reason: "refusal", want: "content_filter"},
 		{name: "content_filter", reason: "content_filter", want: "content_filter"},
 		{name: "content-filter", reason: "content-filter", want: "content_filter"},

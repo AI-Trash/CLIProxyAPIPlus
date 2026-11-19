@@ -1453,7 +1453,7 @@ plugins:
 #   3. Or manually create a JSON file in the auths/ directory:
 #      {"type": "commandcode", "api_key": "cc_...", "email": "user@example.com"}
 #
-# Model aliases (synced from command-code@1.88.0).
+# Model aliases (synced from command-code@1.91.1).
 # name  = upstream / registry id (canonical wire form sent to /alpha/generate)
 # alias = client-facing short name
 # Claude/GPT bare ids are already the wire form; aliases mainly shorten
@@ -1467,6 +1467,8 @@ plugins:
 #       alias: "anthropic:claude-sonnet-5"
 #     - name: "claude-sonnet-4-6"
 #       alias: "anthropic:claude-sonnet-4-6"
+#     - name: "claude-fable-5-2"
+#       alias: "anthropic:claude-fable-5-2"
 #     - name: "claude-fable-5-1"
 #       alias: "anthropic:claude-fable-5-1"
 #     - name: "claude-fable-5"
@@ -1488,8 +1490,14 @@ plugins:
 #     ── GPT (premium, Pro+ plans) ──
 #     - name: "gpt-6-astra"
 #       alias: "openai:gpt-6-astra"
+#     - name: "gpt-6.2-astra"
+#       alias: "openai:gpt-6.2-astra"
+#     - name: "gpt-6.2-sol"
+#       alias: "openai:gpt-6.2-sol"
 #     - name: "gpt-6.1-sol"
 #       alias: "openai:gpt-6.1-sol"
+#     - name: "gpt-6.1-terra"
+#       alias: "openai:gpt-6.1-terra"
 #     - name: "gpt-6-sol"
 #       alias: "openai:gpt-6-sol"
 #     - name: "gpt-6-luna"
@@ -1521,7 +1529,11 @@ plugins:
 #       alias: "deepseek-v4.1-flash"
 #     - name: "deepseek/deepseek-v4.1-flash-fast"
 #       alias: "deepseek-v4.1-flash-fast"
+#     - name: "deepseek/deepseek-v4.1-flash-ultrafast"
+#       alias: "deepseek-v4.1-flash-ultrafast"
 #     ── Kimi (Go-plan) ──
+#     - name: "moonshotai/Kimi-K3.1-Pro"
+#       alias: "kimi-k3.1-pro"
 #     - name: "moonshotai/Kimi-K3"
 #       alias: "kimi-k3"
 #     - name: "moonshotai/Kimi-K2.7-Code"
@@ -1567,6 +1579,8 @@ plugins:
 #     - name: "ornith/ornith-1.5-122b"
 #       alias: "ornith-1.5-122b"
 #     ── Qwen (Go-plan) ──
+#     - name: "Qwen/Qwen4-Max"
+#       alias: "qwen-4-max"
 #     - name: "Qwen/Qwen3.8-Omni-Flash"
 #       alias: "qwen-3.8-omni-flash"
 #     - name: "Qwen/Qwen3.8-Max-Prime"
@@ -1597,6 +1611,14 @@ plugins:
 #     - name: "stepfun/Step-3.5-Flash"
 #       alias: "step-3.5-flash"
 #     ── Tencent (Go-plan, paid) ──
+#     - name: "tencent/hy4"
+#       alias: "tencent-hy4"
+#     - name: "tencent/hy4"
+#       alias: "hy4"
+#     - name: "tencent/hy4-flash"
+#       alias: "tencent-hy4-flash"
+#     - name: "tencent/hy4-flash"
+#       alias: "hy4-flash"
 #     - name: "tencent/hy4-preview"
 #       alias: "tencent-hy4-preview"
 #     - name: "tencent/hy4-preview"
@@ -1608,9 +1630,9 @@ plugins:
 #     ── Stealth ──
 #     - name: "stealth/glyph-cluster:free"
 #       alias: "glyph-cluster"
-#     - name: "reflection/beam:free"
-#       alias: "beam"
 #     ── Gemini (Pro+ plans) ──
+#     - name: "google/gemini-4-carbon"
+#       alias: "gemini-4-carbon"
 #     - name: "google/gemini-4-argon"
 #       alias: "gemini-4-argon"
 #     - name: "google/gemini-3.8-flash"
@@ -1640,10 +1662,14 @@ plugins:
 #       alias: "inkling"
 #     - name: "thinkingmachines/inkling-small"
 #       alias: "inkling-small"
-#     - name: "poolside/laguna-s-2.1-free"
-#       alias: "laguna-s-2.1"
+#     - name: "thinkingmachines/inkling-2-small:free"
+#       alias: "inkling-2-small"
+#     - name: "recursive/flint-v1.0:free"
+#       alias: "flint"
 #     - name: "inclusionai/ling-3.1-flash"
 #       alias: "ling-3.1-flash"
+#     - name: "inclusionai/ling-3.1-flash-1019"
+#       alias: "ling-3.1-flash-1019"
 #     - name: "meta/muse-spark-1.1"
 #       alias: "muse-spark-1.1"
 #     - name: "meta/muse-spark-1.2"
@@ -1658,6 +1684,8 @@ plugins:
 #       alias: "muse-spark-open"
 #     - name: "meta/muse-wonder-1.0"
 #       alias: "muse-wonder"
+#     - name: "meta/muse-ember"
+#       alias: "muse-ember"
 #     - name: "xai/grok-4.5"
 #       alias: "grok-4.5"
 #     - name: "xai/grok-4.6"
