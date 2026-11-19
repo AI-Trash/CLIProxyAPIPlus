@@ -7,12 +7,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
-	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
-	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
-	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
-	"github.com/tidwall/gjson"
+	"github.com/MoeForge/moego/ojson"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
+	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
+	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
 )
 
 func TestCommandCodeExecutor_ExecuteStream_CodexResponseFormat(t *testing.T) {
@@ -386,10 +386,10 @@ func TestCommandCodeExecutor_Execute_NonStreamResponsesFormat(t *testing.T) {
 		t.Fatalf("Execute failed: %v", err)
 	}
 
-	if got := gjson.GetBytes(result.Payload, "object").String(); got != "response" {
+	if got := ojson.GetBytes(result.Payload, "object").String(); got != "response" {
 		t.Fatalf("object = %q, want response; payload=%s", got, string(result.Payload))
 	}
-	if got := gjson.GetBytes(result.Payload, "output.0.content.0.text").String(); got != "Hello world" {
+	if got := ojson.GetBytes(result.Payload, "output.0.content.0.text").String(); got != "Hello world" {
 		t.Fatalf("output text = %q, want Hello world; payload=%s", got, string(result.Payload))
 	}
 }
@@ -747,7 +747,7 @@ func TestCommandCodeExecutor_buildRequestBody_MaxTokensClamp(t *testing.T) {
 				SourceFormat: sdktranslator.FromString(tt.srcFormat),
 			}
 			body := exec.buildRequestBody(req, opts, nil)
-			got := gjson.GetBytes(body, "params.max_tokens").Int()
+			got := ojson.GetBytes(body, "params.max_tokens").Int()
 			if got != tt.want {
 				t.Fatalf("params.max_tokens = %d, want %d; body=%s", got, tt.want, body)
 			}

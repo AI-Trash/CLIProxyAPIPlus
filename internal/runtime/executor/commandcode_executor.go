@@ -19,20 +19,19 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/andybalholm/brotli"
 	"github.com/google/uuid"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
-	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
-	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
-	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
-	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
+	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/usage"
+	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
 	log "github.com/sirupsen/logrus"
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
 )
 
 const (
@@ -440,12 +439,12 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 				line = bytes.TrimSpace(line[5:])
 			}
 
-			chunkType := gjson.GetBytes(line, "type").String()
+			chunkType := ojson.GetBytes(line, "type").String()
 
 			switch {
 			case chunkType == "text-delta":
 				textChunkCount++
-				text := gjson.GetBytes(line, "text").String()
+				text := ojson.GetBytes(line, "text").String()
 				if text == "" {
 					continue
 				}
@@ -460,7 +459,7 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 				// reasoning-delta / reasoning-end plus provider-metadata.
 				// Forward deltas as OpenAI reasoning_content so clients that
 				// surface thinking see it.
-				text := gjson.GetBytes(line, "text").String()
+				text := ojson.GetBytes(line, "text").String()
 				if text == "" {
 					continue
 				}
@@ -471,16 +470,16 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 				// Lifecycle markers — no payload to forward.
 
 			case chunkType == "tool-call":
-				id := gjson.GetBytes(line, "toolCallId").String()
+				id := ojson.GetBytes(line, "toolCallId").String()
 				if id == "" {
-					id = gjson.GetBytes(line, "id").String()
+					id = ojson.GetBytes(line, "id").String()
 				}
 				if id == "" {
 					id = "call_" + strings.ReplaceAll(uuid.New().String(), "-", "")
 				}
-				name := gjson.GetBytes(line, "toolName").String()
+				name := ojson.GetBytes(line, "toolName").String()
 				if name == "" {
-					name = gjson.GetBytes(line, "name").String()
+					name = ojson.GetBytes(line, "name").String()
 				}
 				if name == "" {
 					log.Debugf("commandcode: skipping tool-call with empty name")
@@ -496,7 +495,7 @@ func (e *CommandCodeExecutor) ExecuteStream(ctx context.Context, auth *cliproxya
 
 			case chunkType == "finish":
 				finished = true
-				usageNode := gjson.GetBytes(line, "totalUsage")
+				usageNode := ojson.GetBytes(line, "totalUsage")
 				if cacheWrite := usageNode.Get("inputTokenDetails.cacheWriteTokens"); cacheWrite.Exists() && cacheWrite.Int() > 0 {
 					cacheWriteTokens = cacheWrite.Int()
 				}
@@ -674,8 +673,8 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 	// Command-code expects: content as array-of-blocks, system in params.system
 	messages, sysPrompt := convertMessagesForCC(translated)
 	if messages == "" || messages == "[]" {
-		if input := gjson.GetBytes(payload, "input"); input.Exists() {
-			if input.Type == gjson.String {
+		if input := ojson.GetBytes(payload, "input"); input.Exists() {
+			if input.Type == ojson.String {
 				messages = fmt.Sprintf(`[{"role":"user","content":[{"type":"text","text":%s}]}]`, ccEncode(input.String()))
 			} else if input.IsArray() {
 				messages = fmt.Sprintf(`[{"role":"user","content":%s}]`, input.Raw)
@@ -686,9 +685,9 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 		messages = "[]"
 	}
 
-	maxTokens := gjson.GetBytes(translated, "max_tokens").Int()
+	maxTokens := ojson.GetBytes(translated, "max_tokens").Int()
 	if maxTokens == 0 {
-		maxTokens = gjson.GetBytes(translated, "max_completion_tokens").Int()
+		maxTokens = ojson.GetBytes(translated, "max_completion_tokens").Int()
 	}
 	if maxTokens == 0 {
 		// Official CLI default: HT=64e3 in command-code@1.88.0
@@ -699,10 +698,10 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 
 	// System prompt from translation takes priority; fall back to instructions
 	if sysPrompt == "" {
-		sysPrompt = gjson.GetBytes(translated, "system").String()
+		sysPrompt = ojson.GetBytes(translated, "system").String()
 	}
 	if sysPrompt == "" {
-		sysPrompt = gjson.GetBytes(payload, "instructions").String()
+		sysPrompt = ojson.GetBytes(payload, "instructions").String()
 	}
 	// Params mirror command-code@1.88.0 createModelClient body.params: model,
 	// messages, tools, system (or systemSections via toWireSystem for cache
@@ -743,24 +742,24 @@ func (e *CommandCodeExecutor) buildRequestBody(req cliproxyexecutor.Request, opt
 		sessionID = helps.CCSessionIDFor(apiKey)
 	}
 	if ccIsUUID(sessionID) {
-		body, _ = sjson.Set(body, "threadId", sessionID)
+		body, _ = ojson.Set(body, "threadId", sessionID)
 	}
 
 	if sysPrompt != "" {
-		body, _ = sjson.Set(body, "params.system", sysPrompt)
+		body, _ = ojson.Set(body, "params.system", sysPrompt)
 	}
 
 	if effort := resolveCommandCodeReasoningEffort(req.Model, translated); effort != "" {
-		body, _ = sjson.Set(body, "params.reasoning_effort", effort)
+		body, _ = ojson.Set(body, "params.reasoning_effort", effort)
 	}
-	if temp := gjson.GetBytes(translated, "temperature"); temp.Exists() {
-		body, _ = sjson.Set(body, "params.temperature", temp.Value())
+	if temp := ojson.GetBytes(translated, "temperature"); temp.Exists() {
+		body, _ = ojson.Set(body, "params.temperature", temp.Value())
 	}
-	if toolChoice := gjson.GetBytes(translated, "tool_choice"); toolChoice.Exists() && toolChoice.IsObject() {
-		body, _ = sjson.SetRaw(body, "params.tool_choice", toolChoice.Raw)
+	if toolChoice := ojson.GetBytes(translated, "tool_choice"); toolChoice.Exists() && toolChoice.IsObject() {
+		body, _ = ojson.SetRaw(body, "params.tool_choice", toolChoice.Raw)
 	}
-	if parallelToolCalls := gjson.GetBytes(translated, "parallel_tool_calls"); parallelToolCalls.Exists() {
-		body, _ = sjson.Set(body, "params.parallel_tool_calls", parallelToolCalls.Bool())
+	if parallelToolCalls := ojson.GetBytes(translated, "parallel_tool_calls"); parallelToolCalls.Exists() {
+		body, _ = ojson.Set(body, "params.parallel_tool_calls", parallelToolCalls.Bool())
 	}
 
 	log.Infof("[commandcode] built request body: targetModel=%s srcFormat=%s bodyPreview=%s",
@@ -787,17 +786,17 @@ func resolveCommandCodeReasoningEffort(model string, translated []byte) string {
 		}
 	}
 
-	if re := gjson.GetBytes(translated, "reasoning_effort"); re.Exists() {
+	if re := ojson.GetBytes(translated, "reasoning_effort"); re.Exists() {
 		switch re.Type {
-		case gjson.String:
+		case ojson.String:
 			if effort, ok := normalizeCommandCodeReasoningEffort(re.String()); ok {
 				return effort
 			}
-		case gjson.Number:
+		case ojson.Number:
 			if effort, ok := normalizeCommandCodeBudget(int(re.Int())); ok {
 				return effort
 			}
-		case gjson.True:
+		case ojson.True:
 			return string(thinking.LevelHigh)
 		}
 	}
@@ -1056,7 +1055,7 @@ func ccDecompressBody(r io.Reader, encoding string) ([]byte, error) {
 // - Filters system messages (returns them separately as the second return value)
 // - Converts string content to array-of-blocks format
 func convertMessagesForCC(translated []byte) (messages, system string) {
-	msgs := gjson.GetBytes(translated, "messages")
+	msgs := ojson.GetBytes(translated, "messages")
 	if !msgs.Exists() {
 		return "[]", ""
 	}
@@ -1120,7 +1119,7 @@ func convertMessagesForCC(translated []byte) (messages, system string) {
 	return sb.String(), system
 }
 
-func commandCodePairedToolCallIDs(msgs gjson.Result) map[string]bool {
+func commandCodePairedToolCallIDs(msgs ojson.Result) map[string]bool {
 	callIDs := make(map[string]bool)
 	resultIDs := make(map[string]bool)
 	for _, msg := range msgs.Array() {
@@ -1154,7 +1153,7 @@ func commandCodePairedToolCallIDs(msgs gjson.Result) map[string]bool {
 	return paired
 }
 
-func commandCodeToolNameForID(msgs gjson.Result, toolCallID string) string {
+func commandCodeToolNameForID(msgs ojson.Result, toolCallID string) string {
 	for _, msg := range msgs.Array() {
 		if msg.Get("role").String() != "assistant" {
 			continue
@@ -1173,11 +1172,11 @@ func commandCodeToolNameForID(msgs gjson.Result, toolCallID string) string {
 	return ""
 }
 
-func commandCodeMessageContent(content gjson.Result) string {
+func commandCodeMessageContent(content ojson.Result) string {
 	if !content.Exists() {
 		return "[]"
 	}
-	if content.Type == gjson.String {
+	if content.Type == ojson.String {
 		return fmt.Sprintf(`[{"type":"text","text":%s}]`, ccEncode(content.String()))
 	}
 	if content.IsArray() {
@@ -1194,7 +1193,7 @@ func commandCodeMessageContent(content gjson.Result) string {
 // Text blocks are formatted as {"type":"text","text":...}, and image blocks
 // (OpenAI image_url or Anthropic image) are formatted as
 // {"type":"image","image":<url or dataURL>,"mimeType":<mimeType>}.
-func formatCommandCodeContentArray(content gjson.Result) string {
+func formatCommandCodeContentArray(content ojson.Result) string {
 	var parts []string
 	for _, item := range content.Array() {
 		itemType := item.Get("type").String()
@@ -1236,10 +1235,10 @@ func formatCommandCodeContentArray(content gjson.Result) string {
 	return "[" + strings.Join(parts, ",") + "]"
 }
 
-func commandCodeAssistantContent(msg gjson.Result, contentJSON string, pairedToolCallIDs map[string]bool) string {
+func commandCodeAssistantContent(msg ojson.Result, contentJSON string, pairedToolCallIDs map[string]bool) string {
 	var parts []json.RawMessage
 	content := msg.Get("content")
-	if content.Type == gjson.String && content.String() != "" {
+	if content.Type == ojson.String && content.String() != "" {
 		parts = append(parts, json.RawMessage(fmt.Sprintf(`{"type":"text","text":%s}`, ccEncode(content.String()))))
 	} else if content.IsArray() {
 		for _, part := range content.Array() {
@@ -1284,7 +1283,7 @@ func commandCodeAssistantContent(msg gjson.Result, contentJSON string, pairedToo
 }
 
 func convertToolsForCC(translated []byte) string {
-	tools := gjson.GetBytes(translated, "tools")
+	tools := ojson.GetBytes(translated, "tools")
 	if !tools.Exists() || !tools.IsArray() {
 		return "[]"
 	}
@@ -1309,12 +1308,12 @@ func convertToolsForCC(translated []byte) string {
 		}
 
 		item := []byte(`{"name":"","input_schema":{}}`)
-		item, _ = sjson.SetBytes(item, "name", name)
+		item, _ = ojson.SetBytes(item, "name", name)
 		if description != "" {
-			item, _ = sjson.SetBytes(item, "description", description)
+			item, _ = ojson.SetBytes(item, "description", description)
 		}
 		if inputSchema.Exists() && inputSchema.Raw != "" && inputSchema.Raw != "null" {
-			item, _ = sjson.SetRawBytes(item, "input_schema", []byte(inputSchema.Raw))
+			item, _ = ojson.SetRawBytes(item, "input_schema", []byte(inputSchema.Raw))
 		}
 		converted = append(converted, json.RawMessage(item))
 	}
@@ -1334,16 +1333,16 @@ func convertToolsForCC(translated []byte) string {
 	return sb.String()
 }
 
-func jsonObjectRaw(value gjson.Result) string {
+func jsonObjectRaw(value ojson.Result) string {
 	if !value.Exists() {
 		return "{}"
 	}
 	if value.IsObject() {
 		return value.Raw
 	}
-	if value.Type == gjson.String {
+	if value.Type == ojson.String {
 		raw := strings.TrimSpace(value.String())
-		if raw != "" && gjson.Valid(raw) && gjson.Parse(raw).IsObject() {
+		if raw != "" && ojson.Valid(raw) && ojson.Parse(raw).IsObject() {
 			return raw
 		}
 	}
@@ -1354,20 +1353,20 @@ func (e *CommandCodeExecutor) convertNonStreamToOpenAI(body []byte) ([]byte, usa
 	zero := usage.Detail{}
 
 	// If the response is already OpenAI-compatible, pass through
-	if gjson.GetBytes(body, "choices").Exists() {
+	if ojson.GetBytes(body, "choices").Exists() {
 		return body, parseOpenAIUsage(body)
 	}
 
 	// Parse command-code response format (might be a single text object)
-	text := gjson.GetBytes(body, "text").String()
+	text := ojson.GetBytes(body, "text").String()
 	if text == "" {
-		text = gjson.GetBytes(body, "content").String()
+		text = ojson.GetBytes(body, "content").String()
 	}
 	if text == "" {
 		// Try parsing as array of text-delta-type events
-		if gjson.ValidBytes(body) {
+		if ojson.ValidBytes(body) {
 			var result bytes.Buffer
-			arr := gjson.ParseBytes(body)
+			arr := ojson.ParseBytes(body)
 			if arr.IsArray() {
 				for _, evt := range arr.Array() {
 					if evt.Get("type").String() == "text-delta" {
@@ -1386,7 +1385,7 @@ func (e *CommandCodeExecutor) convertNonStreamToOpenAI(body []byte) ([]byte, usa
 		uuid.New().String(), ccEncode(text))
 
 	var detail usage.Detail
-	if u := gjson.GetBytes(body, "usage"); u.Exists() {
+	if u := ojson.GetBytes(body, "usage"); u.Exists() {
 		detail = usage.Detail{
 			InputTokens:  u.Get("input_tokens").Int(),
 			OutputTokens: u.Get("output_tokens").Int(),
@@ -1447,11 +1446,11 @@ func buildCCFinishChunk(promptTokens, completionTokens, cachedTokens int64, fini
 
 func commandCodeToolArguments(line []byte) string {
 	for _, path := range []string{"input", "args", "arguments"} {
-		value := gjson.GetBytes(line, path)
+		value := ojson.GetBytes(line, path)
 		if !value.Exists() {
 			continue
 		}
-		if value.Type == gjson.String {
+		if value.Type == ojson.String {
 			raw := strings.TrimSpace(value.String())
 			if raw != "" {
 				return raw
@@ -1470,8 +1469,8 @@ func commandCodeToolArguments(line []byte) string {
 // non-negative cacheWriteTokens count that the CLI merges into usage when the
 // finish event did not report one.
 func commandCodeCacheWriteTokens(line []byte) int64 {
-	value := gjson.GetBytes(line, "cacheWriteTokens")
-	if !value.Exists() || value.Type != gjson.Number {
+	value := ojson.GetBytes(line, "cacheWriteTokens")
+	if !value.Exists() || value.Type != ojson.Number {
 		return 0
 	}
 	if n := value.Int(); n > 0 {
@@ -1481,15 +1480,15 @@ func commandCodeCacheWriteTokens(line []byte) int64 {
 }
 
 func parseCommandCodeStreamErrorMessage(line []byte) string {
-	msg := gjson.GetBytes(line, "error.message").String()
+	msg := ojson.GetBytes(line, "error.message").String()
 	if msg == "" {
-		msg = gjson.GetBytes(line, "error").String()
+		msg = ojson.GetBytes(line, "error").String()
 	}
 	if msg == "" {
 		return "stream error"
 	}
 	if idx := strings.Index(msg, "{"); idx != -1 {
-		if embedded := gjson.Get(msg[idx:], "error.message"); embedded.Exists() && embedded.String() != "" {
+		if embedded := ojson.Get(msg[idx:], "error.message"); embedded.Exists() && embedded.String() != "" {
 			return embedded.String()
 		}
 	}
@@ -1519,8 +1518,8 @@ func commandCodeIsRefusalFinishReason(reason string) bool {
 // tool_calls / max_tokens mapping, and rawFinishReason is only a fallback when
 // finishReason is absent.
 func commandCodeEventFinishReason(line []byte, sawToolCall bool) string {
-	finishReason := gjson.GetBytes(line, "finishReason").String()
-	rawFinishReason := gjson.GetBytes(line, "rawFinishReason").String()
+	finishReason := ojson.GetBytes(line, "finishReason").String()
+	rawFinishReason := ojson.GetBytes(line, "rawFinishReason").String()
 	if commandCodeIsRefusalFinishReason(finishReason) || commandCodeIsRefusalFinishReason(rawFinishReason) {
 		return "content_filter"
 	}
@@ -1587,15 +1586,15 @@ func (e *CommandCodeExecutor) aggregateStreamToOpenAI(ctx context.Context, body 
 			line = bytes.TrimSpace(line[5:])
 		}
 
-		chunkType := gjson.GetBytes(line, "type").String()
+		chunkType := ojson.GetBytes(line, "type").String()
 		switch chunkType {
 		case "text-delta":
-			if text := gjson.GetBytes(line, "text").String(); text != "" {
+			if text := ojson.GetBytes(line, "text").String(); text != "" {
 				accText.WriteString(text)
 			}
 
 		case "reasoning-delta":
-			if text := gjson.GetBytes(line, "text").String(); text != "" {
+			if text := ojson.GetBytes(line, "text").String(); text != "" {
 				accReasoning.WriteString(text)
 			}
 
@@ -1604,13 +1603,13 @@ func (e *CommandCodeExecutor) aggregateStreamToOpenAI(ctx context.Context, body 
 
 		case "tool-call":
 			sawToolCall = true
-			id := gjson.GetBytes(line, "toolCallId").String()
+			id := ojson.GetBytes(line, "toolCallId").String()
 			if id == "" {
-				id = gjson.GetBytes(line, "id").String()
+				id = ojson.GetBytes(line, "id").String()
 			}
-			name := gjson.GetBytes(line, "toolName").String()
+			name := ojson.GetBytes(line, "toolName").String()
 			if name == "" {
-				name = gjson.GetBytes(line, "name").String()
+				name = ojson.GetBytes(line, "name").String()
 			}
 			if name == "" {
 				log.Debugf("commandcode: aggregate skipping tool-call with empty name")
@@ -1628,7 +1627,7 @@ func (e *CommandCodeExecutor) aggregateStreamToOpenAI(ctx context.Context, body 
 
 		case "finish":
 			finished = true
-			if usageNode := gjson.GetBytes(line, "totalUsage"); usageNode.Exists() {
+			if usageNode := ojson.GetBytes(line, "totalUsage"); usageNode.Exists() {
 				promptTokens = usageNode.Get("inputTokens").Int()
 				completionTokens = usageNode.Get("outputTokens").Int()
 				if cached := usageNode.Get("inputTokenDetails.cacheReadTokens"); cached.Exists() {
